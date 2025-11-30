@@ -1,0 +1,32 @@
+# Jellyfin config data (persisted locally, not committed)
+config/jellyfin/*
+!config/jellyfin/.gitkeep
+
+# Decrypted media files (mounted via gocryptfs, never committed)
+media/decrypted/*
+!media/decrypted/.gitkeep
+
+# Encrypted media files (stored separately, not committed to git)
+media/encrypted/*
+!media/encrypted/.gitkeep
+
+# gocryptfs config and keys
+gocryptfs.conf
+gocryptfs.diriv
+*.key
+
+# Docker volumes and data
+*.log
+*.tmp
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
