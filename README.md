@@ -19,10 +19,14 @@ A self-hosted private movie theatre built on Jellyfin. This project provides enc
 ```
 theatre/
 ├── config/
+│   ├── .env.example     # Environment variables template
 │   └── jellyfin/        # Jellyfin configuration (gitignored)
+├── docs/                # Documentation (future)
+├── infrastructure/      # Infrastructure as code (future)
 ├── media/
 │   ├── encrypted/       # gocryptfs encrypted storage
 │   └── decrypted/       # gocryptfs mount point (gitignored)
+├── scripts/             # Utility scripts (future)
 ├── docker-compose.yml   # Docker services configuration
 └── README.md
 ```
