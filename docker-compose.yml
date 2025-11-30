@@ -4,9 +4,13 @@ services:
     container_name: jellyfin
     restart: unless-stopped
     ports:
-      - "8096:8096"
+      - "8096:8096"   # HTTP
+      - "8920:8920"   # HTTPS
     volumes:
       - ./config/jellyfin:/config
-      - ./media/decrypted:/media:ro
+      - /srv/library_clear:/media:ro
+    env_file:
+      - path: .env
+        required: false
     environment:
       - JELLYFIN_PublishedServerUrl=${JELLYFIN_URL:-http://localhost:8096}

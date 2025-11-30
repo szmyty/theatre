@@ -27,6 +27,7 @@ theatre/
 │   ├── encrypted/       # gocryptfs encrypted storage
 │   └── decrypted/       # gocryptfs mount point (gitignored)
 ├── scripts/             # Utility scripts (future)
+├── .env.example         # Root environment variables template
 ├── docker-compose.yml   # Docker services configuration
 └── README.md
 ```
@@ -36,9 +37,34 @@ theatre/
 ### Prerequisites
 
 - Docker and Docker Compose
-- gocryptfs (for encrypted media)
+- gocryptfs (optional, for encrypted media)
+- Media files accessible at `/srv/library_clear` (or configure your own path)
 
-### Setup
+### Plain Docker Deployment (Without Encryption)
+
+1. **Configure environment** (optional):
+   ```bash
+   cp .env.example .env
+   # Edit .env with your settings
+   ```
+
+2. **Ensure media directory exists**:
+   ```bash
+   # By default, media is expected at /srv/library_clear
+   # You can modify the volume mount in docker-compose.yml if needed
+   sudo mkdir -p /srv/library_clear
+   ```
+
+3. **Start Jellyfin**:
+   ```bash
+   docker compose up -d
+   ```
+
+4. **Access Jellyfin**:
+   - HTTP: http://localhost:8096
+   - HTTPS: https://localhost:8920
+
+### Setup with Encrypted Storage
 
 1. **Initialize encrypted storage** (first time only):
    ```bash
@@ -50,17 +76,24 @@ theatre/
    gocryptfs media/encrypted media/decrypted
    ```
 
-3. **Start Jellyfin**:
+3. **Update docker-compose.yml** to use the decrypted mount:
+   ```yaml
+   volumes:
+     - ./media/decrypted:/media:ro
+   ```
+
+4. **Start Jellyfin**:
    ```bash
    docker compose up -d
    ```
 
-4. **Access Jellyfin**: Open http://localhost:8096
+5. **Access Jellyfin**: Open http://localhost:8096
 
 ### Stopping
 
 ```bash
 docker compose down
+# If using encrypted storage:
 fusermount -u media/decrypted
 ```
 
