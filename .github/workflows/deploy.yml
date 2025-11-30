@@ -1,0 +1,80 @@
+name: Deploy VM
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  VM_NAME: theatre-vm
+  MACHINE_TYPE: e2-medium
+  IMAGE_FAMILY: debian-12
+  IMAGE_PROJECT: debian-cloud
+  BOOT_DISK_SIZE: 20GB
+  CLOUD_INIT_FILE: infrastructure/cloud-init.yaml
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ secrets.GCP_PROJECT_ID }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create or update VM
+        run: |
+          # Check if VM exists
+          if gcloud compute instances describe "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --quiet 2>/dev/null; then
+            echo "VM ${VM_NAME} exists, updating metadata..."
+            gcloud compute instances add-metadata "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --metadata-from-file=user-data="${CLOUD_INIT_FILE}"
+
+            echo "Restarting VM to apply cloud-init changes..."
+            gcloud compute instances reset "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}"
+          else
+            echo "Creating VM ${VM_NAME}..."
+            gcloud compute instances create "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --machine-type="${MACHINE_TYPE}" \
+              --image-family="${IMAGE_FAMILY}" \
+              --image-project="${IMAGE_PROJECT}" \
+              --boot-disk-size="${BOOT_DISK_SIZE}" \
+              --metadata-from-file=user-data="${CLOUD_INIT_FILE}" \
+              --tags=http-server,https-server
+          fi
+
+      - name: Start VM
+        run: |
+          # Get current VM status
+          STATUS=$(gcloud compute instances describe "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --format="value(status)")
+
+          if [ "${STATUS}" != "RUNNING" ]; then
+            echo "Starting VM ${VM_NAME}..."
+            gcloud compute instances start "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}"
+          else
+            echo "VM ${VM_NAME} is already running"
+          fi
