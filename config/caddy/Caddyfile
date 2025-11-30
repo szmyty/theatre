@@ -1,0 +1,10 @@
+# Caddy reverse proxy configuration with automatic HTTPS via DuckDNS
+# This file configures Caddy to proxy HTTPS requests to Jellyfin
+
+{$DOMAIN_NAME} {
+    reverse_proxy jellyfin:8096
+
+    tls {
+        dns duckdns {$DUCKDNS_TOKEN}
+    }
+}

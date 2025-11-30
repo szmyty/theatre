@@ -28,12 +28,18 @@ The Theatre project is built around a layered architecture designed for security
 │                        Users / Clients                          │
 │                   (Web Browser, Mobile Apps)                    │
 └─────────────────────────────────┬───────────────────────────────┘
-                                  │ HTTP/HTTPS (8096/8920)
+                                  │ HTTPS (443)
                                   ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Google Cloud VM (Debian 12)                  │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │                     Docker Container                       │  │
+│  │                   Docker Containers                        │  │
+│  │  ┌─────────────────────────────────────────────────────┐  │  │
+│  │  │                  Caddy Reverse Proxy                 │  │  │
+│  │  │        (Automatic HTTPS via DuckDNS DNS-01)         │  │  │
+│  │  └────────────────────────┬────────────────────────────┘  │  │
+│  │                           │ HTTP (8096)                    │  │
+│  │                           ▼                                │  │
 │  │  ┌─────────────────────────────────────────────────────┐  │  │
 │  │  │               Jellyfin Media Server                  │  │  │
 │  │  │         (Streaming, Transcoding, SyncPlay)          │  │  │
@@ -65,18 +71,20 @@ The Theatre project is built around a layered architecture designed for security
 | Component | Purpose |
 |-----------|---------|
 | **Jellyfin** | Open-source media server for streaming video content with native SyncPlay support |
+| **Caddy** | Reverse proxy with automatic HTTPS via Let's Encrypt and DuckDNS DNS-01 challenge |
 | **gocryptfs** | FUSE-based encryption layer providing transparent encryption/decryption of media files |
-| **Docker** | Container runtime for running Jellyfin in an isolated, reproducible environment |
+| **Docker** | Container runtime for running Jellyfin and Caddy in isolated, reproducible environments |
 | **Cloud-Init** | Automated VM provisioning on first boot (installs dependencies, clones repo, runs bootstrap) |
 | **DuckDNS** | Free dynamic DNS service for accessing the server via a stable hostname |
 | **Systemd** | Service management for automatic gocryptfs mounting and DuckDNS updates |
 
 ### Security Model
 
-1. **Encryption at Rest**: All media files are encrypted using gocryptfs with AES-256-GCM
-2. **Runtime Decryption**: Files are decrypted on-the-fly only when accessed, never stored unencrypted on disk
-3. **Password Protection**: The gocryptfs password is required to mount the filesystem
-4. **Read-Only Access**: Jellyfin mounts the media directory as read-only to prevent accidental modifications
+1. **Encryption in Transit**: All traffic is encrypted via HTTPS using automatic TLS certificates from Let's Encrypt
+2. **Encryption at Rest**: All media files are encrypted using gocryptfs with AES-256-GCM
+3. **Runtime Decryption**: Files are decrypted on-the-fly only when accessed, never stored unencrypted on disk
+4. **Password Protection**: The gocryptfs password is required to mount the filesystem
+5. **Read-Only Access**: Jellyfin mounts the media directory as read-only to prevent accidental modifications
 
 ## Project Structure
 
@@ -84,6 +92,9 @@ The Theatre project is built around a layered architecture designed for security
 theatre/
 ├── config/
 │   ├── .env.example          # Environment variables template
+│   ├── caddy/                # Caddy reverse proxy configuration
+│   │   ├── Caddyfile         # Caddy configuration file
+│   │   └── Dockerfile        # Custom Caddy build with DuckDNS module
 │   └── jellyfin/             # Jellyfin configuration (gitignored)
 ├── docs/
 │   ├── SETUP.md              # Detailed encrypted storage setup guide
@@ -135,8 +146,8 @@ theatre/
    ```
 
 4. **Access Jellyfin**:
-   - HTTP: http://localhost:8096
-   - HTTPS: https://localhost:8920 (requires SSL certificate configuration in Jellyfin)
+   - Local HTTP: http://localhost:8096
+   - HTTPS (requires DuckDNS setup): https://yourdomain.duckdns.org
 
 ### Stopping
 
@@ -212,10 +223,15 @@ If you prefer to deploy manually or to a different cloud provider:
 
 After deployment, complete these steps:
 
-1. **Configure DuckDNS** (optional, for dynamic DNS):
+1. **Configure DuckDNS and HTTPS**:
    - Follow the instructions in [docs/DUCKDNS.md](docs/DUCKDNS.md)
+   - Set `DOMAIN_NAME` and `DUCKDNS_TOKEN` in your `.env` file
+   - Caddy will automatically obtain TLS certificates
 
-2. **Set up firewall rules** to allow traffic on ports 8096 (HTTP) and 8920 (HTTPS)
+2. **Set up firewall rules** to allow traffic on ports:
+   - Port 80 (HTTP - for ACME challenges)
+   - Port 443 (HTTPS)
+   - Port 8096 (optional, for direct HTTP access to Jellyfin)
 
 3. **Complete Jellyfin initial setup** by accessing the web interface
 
@@ -351,12 +367,49 @@ After uploading new media:
 ### Local Access
 
 - **HTTP**: http://localhost:8096
-- **HTTPS**: https://localhost:8920 (requires SSL configuration)
 
-### Remote Access
+### Remote Access with HTTPS (Recommended)
 
-#### Using DuckDNS (Recommended)
+The Theatre project includes Caddy reverse proxy with automatic HTTPS via Let's Encrypt and DuckDNS.
 
+#### Prerequisites
+
+1. A DuckDNS account and subdomain (e.g., `movietheatre.duckdns.org`)
+2. Your DuckDNS authentication token
+
+#### Configuration
+
+1. **Set up environment variables** in your `.env` file:
+   ```bash
+   cp config/.env.example .env
+   # Edit .env with your values:
+   DOMAIN_NAME=movietheatre.duckdns.org
+   DUCKDNS_TOKEN=your-duckdns-token-here
+   ```
+
+2. **Set up DuckDNS dynamic DNS** following [docs/DUCKDNS.md](docs/DUCKDNS.md)
+
+3. **Configure firewall rules** to allow traffic on ports:
+   - Port 80 (HTTP - required for ACME HTTP-01 challenge fallback)
+   - Port 443 (HTTPS)
+
+4. **Start the services**:
+   ```bash
+   docker compose up -d
+   ```
+
+5. **Access Jellyfin** via HTTPS:
+   - **HTTPS**: https://movietheatre.duckdns.org (or your configured domain)
+
+Caddy will automatically:
+- Obtain TLS certificates from Let's Encrypt using DNS-01 challenge
+- Redirect HTTP to HTTPS
+- Renew certificates before they expire
+- Store certificates in the `caddy_data` volume
+
+#### Using DuckDNS without HTTPS
+
+If you prefer HTTP-only access:
 1. Set up DuckDNS following [docs/DUCKDNS.md](docs/DUCKDNS.md)
 2. Access via: http://yoursubdomain.duckdns.org:8096
 
@@ -366,7 +419,7 @@ Access via the VM's public IP: http://YOUR_VM_IP:8096
 
 ### First-Time Setup
 
-1. **Access the web interface** at http://your-server:8096
+1. **Access the web interface** at https://your-domain.duckdns.org (or http://localhost:8096 for local access)
 2. **Create an admin account** with a strong password
 3. **Add media libraries**:
    - Click **Add Media Library**
@@ -384,7 +437,7 @@ Jellyfin has official apps for:
 - Amazon Fire TV
 - Roku
 
-Configure the app with your server address (e.g., `http://yoursubdomain.duckdns.org:8096`).
+Configure the app with your server address (e.g., `https://yoursubdomain.duckdns.org`).
 
 ## Using SyncPlay for Watch Parties
 
@@ -439,7 +492,6 @@ The following automation improvements are planned or in progress:
 
 ### Planned Features
 
-- [ ] **Automated SSL/TLS with Let's Encrypt**: Automatic certificate provisioning using Caddy or Certbot
 - [ ] **Terraform Infrastructure**: Infrastructure as Code for full GCP deployment automation
 - [ ] **Automated Backups**: Scheduled backups of Jellyfin configuration and encrypted media metadata
 - [ ] **Monitoring & Alerting**: Integration with Prometheus/Grafana for system monitoring
@@ -458,6 +510,7 @@ The following automation improvements are planned or in progress:
 | gocryptfs Auto-mount | ✅ Complete | Systemd service for boot-time mounting |
 | DuckDNS Updates | ✅ Complete | Systemd timer for periodic DNS updates |
 | GitHub Actions Deploy | ✅ Complete | One-click VM deployment workflow |
+| Automatic HTTPS | ✅ Complete | Caddy reverse proxy with Let's Encrypt via DuckDNS DNS-01 |
 
 ### Contributing
 
