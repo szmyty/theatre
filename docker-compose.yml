@@ -6,7 +6,7 @@ services:
     ports:
       - "8096:8096"   # HTTP (direct access)
     volumes:
-      - ./config/jellyfin:/config
+      - /mnt/disks/media/jellyfin_config:/config
       - /srv/library_clear:/media:ro
     env_file:
       - path: .env
