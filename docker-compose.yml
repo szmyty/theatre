@@ -4,8 +4,7 @@ services:
     container_name: jellyfin
     restart: unless-stopped
     ports:
-      - "8096:8096"   # HTTP
-      - "8920:8920"   # HTTPS (requires SSL configuration in Jellyfin)
+      - "8096:8096"   # HTTP (direct access)
     volumes:
       - ./config/jellyfin:/config
       - /srv/library_clear:/media:ro
@@ -14,3 +13,27 @@ services:
         required: false
     environment:
       - JELLYFIN_PublishedServerUrl=${JELLYFIN_URL:-http://localhost:8096}
+
+  caddy:
+    build:
+      context: ./config/caddy
+      dockerfile: Dockerfile
+    container_name: caddy
+    restart: unless-stopped
+    depends_on:
+      - jellyfin
+    ports:
+      - "80:80"       # HTTP (redirects to HTTPS)
+      - "443:443"     # HTTPS
+      - "443:443/udp" # HTTP/3 (QUIC)
+    volumes:
+      - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME:-movietheatre.duckdns.org}
+      - DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+
+volumes:
+  caddy_data:
+  caddy_config:
