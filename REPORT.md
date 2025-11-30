@@ -38,11 +38,12 @@ This audit identified **28 findings** across security, reliability, maintainabil
 # docker-compose.yml line 3
 image: jellyfin/jellyfin:latest
 
-# config/caddy/Dockerfile line 2
+# config/caddy/Dockerfile lines 2, 7
 FROM caddy:builder AS builder
+FROM caddy:latest
 ```
 
-**Recommendation:** Pin images to specific versions (e.g., `jellyfin/jellyfin:10.8.13`, `caddy:2.7.6-builder`) and use Dependabot or Renovate for automated updates.
+**Recommendation:** Pin images to specific versions (e.g., `jellyfin/jellyfin:10.8.13`, `caddy:2.7.6-builder`, `caddy:2.7.6`) and use Dependabot or Renovate for automated updates.
 
 **Suggested Issue Title:** `Pin Docker images to specific versions for reproducible builds`
 
@@ -161,15 +162,15 @@ trap cleanup EXIT
 ```yaml
 jellyfin:
   healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
+    test: ["CMD", "curl", "-f", "http://localhost:8096/System/Info/Public"]
     interval: 30s
     timeout: 10s
     retries: 3
-    start_period: 30s
+    start_period: 60s
 
 caddy:
   healthcheck:
-    test: ["CMD", "wget", "--spider", "-q", "http://localhost:80"]
+    test: ["CMD", "caddy", "version"]
     interval: 30s
     timeout: 10s
     retries: 3
@@ -417,18 +418,16 @@ on:
 
 **Finding:** No memory or CPU limits defined for containers, which could lead to resource exhaustion.
 
-**Recommendation:**
+**Recommendation:** For Docker Compose v2 (which this project uses), add resource limits:
 
 ```yaml
 jellyfin:
-  deploy:
-    resources:
-      limits:
-        memory: 4G
-        cpus: '2.0'
-      reservations:
-        memory: 1G
+  mem_limit: 4g
+  cpus: 2.0
+  memswap_limit: 4g
 ```
+
+Note: For Docker Compose v3 with Swarm mode, use `deploy.resources.limits` instead.
 
 **Suggested Issue Title:** `Add resource limits to Docker containers`
 
