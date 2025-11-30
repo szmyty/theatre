@@ -1,0 +1,73 @@
+#cloud-config
+#
+# Cloud-Init configuration for Theatre Project
+# This configures a fresh VM with Docker, gocryptfs, and runs the bootstrap script.
+#
+
+# Install required packages
+packages:
+  - git
+  - gocryptfs
+  - fuse
+
+# Write files needed for setup
+write_files:
+  - path: /opt/theatre/setup-disk.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      
+      # Default disk device for Google Cloud attached disks
+      # Override via cloud-init metadata if needed
+      DISK_DEVICE="${DISK_DEVICE:-/dev/sdb}"
+      MOUNT_POINT="/mnt/disks/data"
+      
+      # Wait for disk to be available
+      for i in {1..30}; do
+        if [ -b "${DISK_DEVICE}" ]; then
+          break
+        fi
+        sleep 2
+      done
+      
+      if [ ! -b "${DISK_DEVICE}" ]; then
+        echo "Disk device ${DISK_DEVICE} not found, skipping disk setup"
+        exit 0
+      fi
+      
+      # Check if disk is already formatted
+      if ! blkid "${DISK_DEVICE}" &>/dev/null; then
+        echo "Formatting ${DISK_DEVICE} as ext4..."
+        mkfs.ext4 -F "${DISK_DEVICE}"
+      fi
+      
+      # Create mount point
+      mkdir -p "${MOUNT_POINT}"
+      
+      # Mount the disk
+      if ! mountpoint -q "${MOUNT_POINT}"; then
+        mount "${DISK_DEVICE}" "${MOUNT_POINT}"
+      fi
+      
+      # Add to fstab if not already present
+      if ! grep -q "${DISK_DEVICE}" /etc/fstab; then
+        echo "${DISK_DEVICE} ${MOUNT_POINT} ext4 defaults,nofail 0 2" >> /etc/fstab
+      fi
+      
+      echo "Disk setup complete"
+
+# Run commands on first boot
+runcmd:
+  # Install Docker using the official convenience script
+  - curl -fsSL https://get.docker.com | bash
+  - systemctl enable --now docker
+
+  # Setup attached disk
+  - /opt/theatre/setup-disk.sh
+
+  # Clone the repository
+  - git clone https://github.com/szmyty/theatre.git /opt/theatre/repo
+
+  # Run bootstrap script
+  - /opt/theatre/repo/infrastructure/bootstrap.sh
