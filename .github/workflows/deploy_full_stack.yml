@@ -118,8 +118,20 @@ jobs:
               --project="${{ secrets.GCP_PROJECT_ID }}" \
               --zone="${{ secrets.GCP_ZONE }}"
 
+            # Wait for VM to be ready by polling status
             echo "Waiting for VM to be ready..."
-            sleep 30
+            for i in {1..12}; do
+              STATUS=$(gcloud compute instances describe "${VM_NAME}" \
+                --project="${{ secrets.GCP_PROJECT_ID }}" \
+                --zone="${{ secrets.GCP_ZONE }}" \
+                --format="value(status)" 2>/dev/null || echo "UNKNOWN")
+              if [ "${STATUS}" = "RUNNING" ]; then
+                echo "VM is running"
+                break
+              fi
+              echo "VM status: ${STATUS}, waiting..."
+              sleep 5
+            done
           else
             echo "VM ${VM_NAME} is already running"
           fi
@@ -172,6 +184,7 @@ jobs:
           DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
           DUCKDNS_DOMAIN=${DUCKDNS_DOMAIN}
           DOMAIN_NAME=${DOMAIN_NAME}
+          GITHUB_REPOSITORY_URL=https://github.com/${{ github.repository }}.git
           SECRETSEOF
           chmod 600 /tmp/secrets.env
 
@@ -362,12 +375,13 @@ jobs:
           # Install and enable systemd gocryptfs-mount.service
           # ============================================================
           REPO_DIR="/opt/theatre/repo"
+          REPO_URL="${GITHUB_REPOSITORY_URL:-https://github.com/szmyty/theatre.git}"
           SYSTEMD_SERVICE="/etc/systemd/system/gocryptfs-mount.service"
 
           log "Setting up gocryptfs systemd service..."
           if [ ! -d "${REPO_DIR}" ]; then
-            log "Cloning repository..."
-            git clone --depth 1 https://github.com/szmyty/theatre.git "${REPO_DIR}"
+            log "Cloning repository from ${REPO_URL}..."
+            git clone --depth 1 "${REPO_URL}" "${REPO_DIR}"
           fi
 
           if [ -f "${REPO_DIR}/infrastructure/systemd/gocryptfs-mount.service" ]; then
@@ -427,8 +441,16 @@ jobs:
           cd "${REPO_DIR}"
           if [ -f "docker-compose.yml" ]; then
             docker compose pull
-            docker compose up --detach --wait || docker compose up --detach
-            log "Docker services started"
+            # Start services and wait for health checks
+            # The --wait option may fail if services don't have health checks defined
+            if docker compose up --detach --wait 2>/dev/null; then
+              log "Docker services started and healthy"
+            else
+              # Fallback: start without waiting for health checks
+              log "Starting services without health check wait..."
+              docker compose up --detach
+              log "Docker services started (health checks may still be pending)"
+            fi
           fi
 
           log "Provisioning completed successfully"
