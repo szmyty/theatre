@@ -167,11 +167,54 @@ The Theatre project supports automated deployment to Google Cloud VMs using clou
 2. A GCP project with Compute Engine API enabled
 3. GitHub repository secrets configured:
    - `GCP_PROJECT_ID`: Your Google Cloud project ID
+   - `GCP_PROJECT_NUMBER`: Your Google Cloud project number
    - `GCP_ZONE`: The zone for your VM (e.g., `us-central1-a`)
    - `GCP_SA_EMAIL`: Service account email with Compute Engine permissions
-4. Workload Identity Federation configured between GitHub and GCP
+   - `GOCRYPTFS_PASSWORD`: Password for encrypting media files
+   - `DUCKDNS_TOKEN`: Your DuckDNS authentication token
+4. GitHub repository variables configured:
+   - `GCP_VM_NAME`: VM name (defaults to `theatre-vm`)
+   - `GCP_MEDIA_DISK_NAME`: Media disk name (defaults to `theatre-media-disk`)
+   - `DOMAIN_NAME`: Your DuckDNS domain (e.g., `movietheatre.duckdns.org`)
+   - `DUCKDNS_DOMAIN`: Your DuckDNS subdomain (e.g., `movietheatre`)
+5. Workload Identity Federation configured between GitHub and GCP
 
-### Automated Deployment (GitHub Actions)
+### Full Stack Deployment (Recommended)
+
+The **Deploy Full Stack** workflow provides a complete, idempotent deployment of the entire theatre platform:
+
+1. **Configure repository secrets and variables** in GitHub:
+   - Go to **Settings** → **Secrets and variables** → **Actions**
+   - Add all required secrets and variables listed above
+
+2. **Trigger the deployment**:
+   - Go to **Actions** → **Deploy Full Stack**
+   - Click **Run workflow**
+
+The workflow will:
+- Create or reuse the VM (idempotent)
+- Create or reuse the media disk (idempotent)
+- Attach the media disk to the VM
+- Install fuse3, gocryptfs, Docker, and docker-compose
+- Format the media disk (only if unformatted)
+- Mount the disk at `/mnt/disks/media`
+- Initialize gocryptfs encryption (only if not initialized)
+- Mount the decrypted view at `/srv/library_clear`
+- Install and enable systemd services for gocryptfs and DuckDNS
+- Start Jellyfin and Caddy containers
+- Obtain HTTPS certificates via Let's Encrypt
+- Verify all components and print a deployment summary
+
+After successful deployment, access your theatre at:
+```
+https://${DOMAIN_NAME}
+```
+
+**Note:** The system will be fully deployed but with no movies. See [Uploading Media](#uploading-media) for the next step.
+
+### Basic VM Deployment
+
+For basic VM creation without full provisioning:
 
 1. **Configure repository secrets** in GitHub:
    - Go to **Settings** → **Secrets and variables** → **Actions**
@@ -318,7 +361,9 @@ For detailed setup instructions, see [docs/SETUP.md](docs/SETUP.md) and [docs/GO
 
 ## Uploading Media
 
-The project includes a script for uploading media files to the remote VM.
+After running the **Deploy Full Stack** workflow, the system is fully deployed but has no movies yet. This is intentional — uploading media is the next manual step.
+
+The project includes a script for uploading media files to the remote VM. When you upload files to `/srv/library_clear`, gocryptfs automatically encrypts them on write, and Jellyfin immediately sees them.
 
 ### Using the Upload Script
 
@@ -332,7 +377,10 @@ The project includes a script for uploading media files to the remote VM.
 
 **Examples**:
 ```bash
-# Upload a movie file
+# Upload a movie file using your DuckDNS domain
+./scripts/upload-media.sh /path/to/movie.mp4 user@movietheatre.duckdns.org
+
+# Upload a movie file using the VM's IP address
 ./scripts/upload-media.sh /path/to/movie.mp4 user@192.168.1.100
 
 # Upload to a VM with a hostname

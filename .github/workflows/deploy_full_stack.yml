@@ -1,0 +1,637 @@
+name: Deploy Full Stack
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  # VM Configuration
+  VM_NAME: ${{ vars.GCP_VM_NAME || 'theatre-vm' }}
+  MACHINE_TYPE: e2-medium
+  IMAGE_FAMILY: debian-12
+  IMAGE_PROJECT: debian-cloud
+  BOOT_DISK_SIZE: 20GB
+  CLOUD_INIT_FILE: infrastructure/cloud-init.yaml
+
+  # Disk Configuration
+  MEDIA_DISK_NAME: ${{ vars.GCP_MEDIA_DISK_NAME || 'theatre-media-disk' }}
+  MEDIA_DISK_SIZE: 200GB
+  MEDIA_DISK_TYPE: pd-standard
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Ensure media disk exists
+        id: disk
+        run: |
+          echo "::group::Checking if media disk exists"
+          if gcloud compute disks describe "${MEDIA_DISK_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --quiet 2>/dev/null; then
+            echo "Media disk ${MEDIA_DISK_NAME} already exists"
+            echo "disk_created=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Creating media disk ${MEDIA_DISK_NAME}..."
+            gcloud compute disks create "${MEDIA_DISK_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --size="${MEDIA_DISK_SIZE}" \
+              --type="${MEDIA_DISK_TYPE}"
+            echo "disk_created=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "::endgroup::"
+
+      - name: Ensure VM exists
+        id: vm
+        run: |
+          echo "::group::Checking if VM exists"
+          if gcloud compute instances describe "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --quiet 2>/dev/null; then
+            echo "VM ${VM_NAME} already exists"
+            echo "vm_created=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Creating VM ${VM_NAME}..."
+            gcloud compute instances create "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --machine-type="${MACHINE_TYPE}" \
+              --image-family="${IMAGE_FAMILY}" \
+              --image-project="${IMAGE_PROJECT}" \
+              --boot-disk-size="${BOOT_DISK_SIZE}" \
+              --metadata-from-file=user-data="${CLOUD_INIT_FILE}" \
+              --tags=http-server,https-server
+            echo "vm_created=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "::endgroup::"
+
+      - name: Ensure media disk is attached
+        run: |
+          echo "::group::Checking if media disk is attached"
+          ATTACHED=$(gcloud compute instances describe "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --format="value(disks[].source)" | grep -c "${MEDIA_DISK_NAME}" || true)
+
+          if [ "${ATTACHED}" -gt 0 ]; then
+            echo "Media disk ${MEDIA_DISK_NAME} is already attached to ${VM_NAME}"
+          else
+            echo "Attaching media disk ${MEDIA_DISK_NAME} to ${VM_NAME}..."
+            gcloud compute instances attach-disk "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --disk="${MEDIA_DISK_NAME}" \
+              --device-name=media-disk
+          fi
+          echo "::endgroup::"
+
+      - name: Ensure VM is running
+        run: |
+          echo "::group::Checking VM status"
+          STATUS=$(gcloud compute instances describe "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --format="value(status)")
+
+          if [ "${STATUS}" != "RUNNING" ]; then
+            echo "Starting VM ${VM_NAME}..."
+            gcloud compute instances start "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}"
+
+            # Wait for VM to be ready by polling status
+            echo "Waiting for VM to be ready..."
+            for i in {1..12}; do
+              STATUS=$(gcloud compute instances describe "${VM_NAME}" \
+                --project="${{ secrets.GCP_PROJECT_ID }}" \
+                --zone="${{ secrets.GCP_ZONE }}" \
+                --format="value(status)" 2>/dev/null || echo "UNKNOWN")
+              if [ "${STATUS}" = "RUNNING" ]; then
+                echo "VM is running"
+                break
+              fi
+              echo "VM status: ${STATUS}, waiting..."
+              sleep 5
+            done
+          else
+            echo "VM ${VM_NAME} is already running"
+          fi
+          echo "::endgroup::"
+
+      - name: Get VM external IP
+        id: get_ip
+        run: |
+          echo "::group::Getting VM external IP"
+          EXTERNAL_IP=$(gcloud compute instances describe "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --format="value(networkInterfaces[0].accessConfigs[0].natIP)")
+          echo "VM external IP: ${EXTERNAL_IP}"
+          echo "external_ip=${EXTERNAL_IP}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Wait for SSH to be available
+        run: |
+          echo "::group::Waiting for SSH"
+          MAX_ATTEMPTS=30
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            if gcloud compute ssh "${VM_NAME}" \
+                --project="${{ secrets.GCP_PROJECT_ID }}" \
+                --zone="${{ secrets.GCP_ZONE }}" \
+                --command="echo 'SSH is ready'" \
+                --quiet 2>/dev/null; then
+              echo "SSH is available"
+              break
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Waiting for SSH (attempt ${ATTEMPT}/${MAX_ATTEMPTS})..."
+            sleep 10
+          done
+
+          if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+            echo "Failed to connect via SSH after ${MAX_ATTEMPTS} attempts"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: Run idempotent provisioning on VM
+        run: |
+          echo "::group::Running idempotent provisioning"
+
+          # Create a temporary secrets file (more secure than command line arguments)
+          cat > /tmp/secrets.env << SECRETSEOF
+          GOCRYPTFS_PASSWORD=${GOCRYPTFS_PASSWORD}
+          DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+          DUCKDNS_DOMAIN=${DUCKDNS_DOMAIN}
+          DOMAIN_NAME=${DOMAIN_NAME}
+          GITHUB_REPOSITORY_URL=https://github.com/${{ github.repository }}.git
+          SECRETSEOF
+          chmod 600 /tmp/secrets.env
+
+          # Create the provisioning script
+          cat > /tmp/provision.sh << 'PROVISION_EOF'
+          #!/bin/bash
+          set -euo pipefail
+
+          # Source secrets from environment file
+          if [ -f /tmp/secrets.env ]; then
+            set -a
+            source /tmp/secrets.env
+            set +a
+            # Clean up secrets file immediately after reading
+            rm -f /tmp/secrets.env
+          fi
+
+          log() {
+            echo "[$(date --iso-8601=seconds)] $*"
+          }
+
+          # ============================================================
+          # Install fuse3 and gocryptfs if missing
+          # ============================================================
+          log "Checking fuse3 and gocryptfs..."
+          if ! command -v gocryptfs &>/dev/null || ! dpkg -s fuse3 &>/dev/null 2>&1; then
+            log "Installing fuse3 and gocryptfs..."
+            apt-get update --quiet
+            apt-get install --yes --quiet fuse3 gocryptfs
+            log "fuse3 and gocryptfs installed"
+          else
+            log "fuse3 and gocryptfs already installed"
+          fi
+
+          # Ensure user_allow_other is set in fuse.conf
+          if ! grep -q "^user_allow_other" /etc/fuse.conf 2>/dev/null; then
+            echo "user_allow_other" >> /etc/fuse.conf
+            log "Added user_allow_other to /etc/fuse.conf"
+          fi
+
+          # ============================================================
+          # Install Docker and docker-compose if missing
+          # ============================================================
+          log "Checking Docker..."
+          if ! command -v docker &>/dev/null; then
+            log "Installing Docker..."
+            # Use apt-get for Docker installation (more secure than curl | bash)
+            apt-get update --quiet
+            apt-get install --yes --quiet ca-certificates curl gnupg
+            install -m 0755 -d /etc/apt/keyrings
+            if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+              curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              chmod a+r /etc/apt/keyrings/docker.gpg
+            fi
+            if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
+              echo \
+                "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
+                $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+                tee /etc/apt/sources.list.d/docker.list > /dev/null
+            fi
+            apt-get update --quiet
+            apt-get install --yes --quiet docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            systemctl enable --now docker
+            log "Docker installed"
+          else
+            log "Docker already installed"
+          fi
+
+          # ============================================================
+          # Format /dev/sdb as ext4 ONLY if unformatted
+          # ============================================================
+          DISK_DEVICE="/dev/sdb"
+          MOUNT_POINT="/mnt/disks/media"
+
+          log "Checking disk ${DISK_DEVICE}..."
+          if [ -b "${DISK_DEVICE}" ]; then
+            if ! blkid "${DISK_DEVICE}" &>/dev/null; then
+              log "Formatting ${DISK_DEVICE} as ext4..."
+              mkfs.ext4 -F "${DISK_DEVICE}"
+              log "Disk formatted"
+            else
+              log "Disk ${DISK_DEVICE} is already formatted"
+            fi
+          else
+            log "WARNING: Disk device ${DISK_DEVICE} not found"
+          fi
+
+          # ============================================================
+          # Ensure /mnt/disks/media exists and is mounted via /etc/fstab
+          # ============================================================
+          log "Ensuring mount point ${MOUNT_POINT} exists..."
+          mkdir -p "${MOUNT_POINT}"
+
+          if [ -b "${DISK_DEVICE}" ]; then
+            # Add to fstab if not present
+            if ! grep -q "${DISK_DEVICE}" /etc/fstab; then
+              echo "${DISK_DEVICE} ${MOUNT_POINT} ext4 defaults,nofail 0 2" >> /etc/fstab
+              log "Added ${DISK_DEVICE} to /etc/fstab"
+            fi
+
+            # Mount if not already mounted
+            if ! mountpoint -q "${MOUNT_POINT}"; then
+              mount "${MOUNT_POINT}"
+              log "Mounted ${MOUNT_POINT}"
+            else
+              log "${MOUNT_POINT} is already mounted"
+            fi
+          fi
+
+          # ============================================================
+          # Ensure /mnt/disks/media/.library_encrypted exists
+          # ============================================================
+          ENCRYPTED_DIR="${MOUNT_POINT}/.library_encrypted"
+          log "Ensuring encrypted directory ${ENCRYPTED_DIR} exists..."
+          mkdir -p "${ENCRYPTED_DIR}"
+          chmod 700 "${ENCRYPTED_DIR}"
+          log "Encrypted directory ready"
+
+          # ============================================================
+          # Create gocryptfs password file and environment first
+          # ============================================================
+          GOCRYPTFS_ENV_DIR="/etc/gocryptfs"
+          PASSFILE="${GOCRYPTFS_ENV_DIR}/passfile"
+          ENV_FILE="${GOCRYPTFS_ENV_DIR}/gocryptfs.env"
+          MOUNT_CLEAR="/srv/library_clear"
+
+          log "Setting up gocryptfs environment..."
+          mkdir -p "${GOCRYPTFS_ENV_DIR}"
+          chmod 700 "${GOCRYPTFS_ENV_DIR}"
+
+          if [ -n "${GOCRYPTFS_PASSWORD:-}" ]; then
+            # Write password to file with restricted permissions (avoids process list exposure)
+            touch "${PASSFILE}"
+            chmod 600 "${PASSFILE}"
+            printf '%s' "${GOCRYPTFS_PASSWORD}" > "${PASSFILE}"
+            log "Password file created"
+          fi
+
+          cat > "${ENV_FILE}" << ENVEOF
+          GOCRYPTFS_ENCRYPTED_DIR=${ENCRYPTED_DIR}
+          GOCRYPTFS_MOUNT_POINT=${MOUNT_CLEAR}
+          GOCRYPTFS_PASSFILE=${PASSFILE}
+          ENVEOF
+          chmod 600 "${ENV_FILE}"
+          log "Environment file created"
+
+          # ============================================================
+          # Initialize gocryptfs ONLY if not already initialized
+          # ============================================================
+          log "Checking gocryptfs initialization..."
+          if [ ! -f "${ENCRYPTED_DIR}/gocryptfs.conf" ]; then
+            if [ -f "${PASSFILE}" ]; then
+              log "Initializing gocryptfs..."
+              gocryptfs --init --passfile "${PASSFILE}" "${ENCRYPTED_DIR}"
+              log "gocryptfs initialized"
+            else
+              log "WARNING: GOCRYPTFS_PASSWORD not set, skipping gocryptfs init"
+            fi
+          else
+            log "gocryptfs already initialized"
+          fi
+
+          # ============================================================
+          # Ensure /srv/library_clear exists with correct permissions
+          # ============================================================
+          log "Ensuring decrypted mount point ${MOUNT_CLEAR} exists..."
+          mkdir -p "${MOUNT_CLEAR}"
+          chmod 755 "${MOUNT_CLEAR}"
+          log "Decrypted mount point ready"
+
+          # ============================================================
+          # Mount decrypted view using gocryptfs with allow_other
+          # ============================================================
+          log "Checking gocryptfs mount..."
+          if ! mountpoint -q "${MOUNT_CLEAR}"; then
+            if [ -f "${ENCRYPTED_DIR}/gocryptfs.conf" ] && [ -f "${PASSFILE}" ]; then
+              log "Mounting gocryptfs..."
+              gocryptfs -allow_other -passfile "${PASSFILE}" "${ENCRYPTED_DIR}" "${MOUNT_CLEAR}"
+              log "gocryptfs mounted"
+            else
+              log "WARNING: Cannot mount gocryptfs - missing config or passfile"
+            fi
+          else
+            log "gocryptfs already mounted"
+          fi
+
+          # ============================================================
+          # Install and enable systemd gocryptfs-mount.service
+          # ============================================================
+          REPO_DIR="/opt/theatre/repo"
+          REPO_URL="${GITHUB_REPOSITORY_URL:-https://github.com/szmyty/theatre.git}"
+          SYSTEMD_SERVICE="/etc/systemd/system/gocryptfs-mount.service"
+
+          log "Setting up gocryptfs systemd service..."
+          if [ ! -d "${REPO_DIR}" ]; then
+            log "Cloning repository from ${REPO_URL}..."
+            git clone --depth 1 "${REPO_URL}" "${REPO_DIR}"
+          fi
+
+          if [ -f "${REPO_DIR}/infrastructure/systemd/gocryptfs-mount.service" ]; then
+            cp "${REPO_DIR}/infrastructure/systemd/gocryptfs-mount.service" "${SYSTEMD_SERVICE}"
+            # Update paths in service file to use media disk location
+            sed -i "s|/srv/library_encrypted|${ENCRYPTED_DIR}|g" "${SYSTEMD_SERVICE}"
+            chmod 644 "${SYSTEMD_SERVICE}"
+            systemctl daemon-reload
+            systemctl enable gocryptfs-mount.service
+            log "gocryptfs-mount.service installed and enabled"
+          fi
+
+          # ============================================================
+          # Install DuckDNS update script and systemd timer
+          # ============================================================
+          log "Setting up DuckDNS..."
+          DUCKDNS_ENV_DIR="/etc/duckdns"
+          mkdir -p "${DUCKDNS_ENV_DIR}"
+
+          if [ -n "${DUCKDNS_TOKEN:-}" ] && [ -n "${DUCKDNS_DOMAIN:-}" ]; then
+            cat > "${DUCKDNS_ENV_DIR}/duckdns.env" << DUCKEOF
+          DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+          DUCKDNS_DOMAIN=${DUCKDNS_DOMAIN}
+          DUCKEOF
+            chmod 600 "${DUCKDNS_ENV_DIR}/duckdns.env"
+            log "DuckDNS environment file created"
+          fi
+
+          if [ -f "${REPO_DIR}/infrastructure/systemd/duckdns-update.service" ]; then
+            cp "${REPO_DIR}/infrastructure/systemd/duckdns-update.service" /etc/systemd/system/
+            cp "${REPO_DIR}/infrastructure/systemd/duckdns-update.timer" /etc/systemd/system/
+            chmod 644 /etc/systemd/system/duckdns-update.service
+            chmod 644 /etc/systemd/system/duckdns-update.timer
+            systemctl daemon-reload
+            systemctl enable --now duckdns-update.timer
+            log "DuckDNS timer installed and enabled"
+          fi
+
+          # ============================================================
+          # Create .env file for docker-compose
+          # ============================================================
+          log "Setting up docker-compose environment..."
+          cd "${REPO_DIR}"
+          if [ -n "${DOMAIN_NAME:-}" ]; then
+            cat > .env << DOTENVEOF
+          DOMAIN_NAME=${DOMAIN_NAME}
+          DUCKDNS_TOKEN=${DUCKDNS_TOKEN:-}
+          JELLYFIN_URL=https://${DOMAIN_NAME}
+          DOTENVEOF
+            log ".env file created"
+          fi
+
+          # ============================================================
+          # Run docker-compose to start all services (Jellyfin + Caddy)
+          # ============================================================
+          log "Starting docker-compose services..."
+          cd "${REPO_DIR}"
+          if [ -f "docker-compose.yml" ]; then
+            docker compose pull
+            # Start services and wait for health checks
+            # The --wait option may fail if services don't have health checks defined
+            if docker compose up --detach --wait 2>/dev/null; then
+              log "Docker services started and healthy"
+            else
+              # Fallback: start without waiting for health checks
+              log "Starting services without health check wait..."
+              docker compose up --detach
+              log "Docker services started (health checks may still be pending)"
+            fi
+          fi
+
+          log "Provisioning completed successfully"
+          PROVISION_EOF
+
+          chmod +x /tmp/provision.sh
+
+          # Copy secrets file to VM (more secure than command line arguments)
+          gcloud compute scp /tmp/secrets.env "${VM_NAME}:/tmp/secrets.env" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --quiet
+
+          # Copy script to VM
+          gcloud compute scp /tmp/provision.sh "${VM_NAME}:/tmp/provision.sh" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --quiet
+
+          # Run the script (secrets are read from file, not command line)
+          gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command="sudo /tmp/provision.sh"
+
+          # Clean up local secrets file
+          rm -f /tmp/secrets.env
+
+          echo "::endgroup::"
+        env:
+          GOCRYPTFS_PASSWORD: ${{ secrets.GOCRYPTFS_PASSWORD }}
+          DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
+          DUCKDNS_DOMAIN: ${{ vars.DUCKDNS_DOMAIN }}
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+
+      - name: Verify /mnt/disks/media is mounted
+        id: verify_media_mount
+        run: |
+          echo "::group::Verifying /mnt/disks/media mount"
+          RESULT=$(gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='mountpoint -q /mnt/disks/media && echo "MOUNTED" || echo "NOT_MOUNTED"' \
+            --quiet)
+          echo "Media mount status: ${RESULT}"
+          echo "media_mount_status=${RESULT}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Verify /srv/library_clear is mounted via gocryptfs
+        id: verify_gocryptfs_mount
+        run: |
+          echo "::group::Verifying /srv/library_clear mount"
+          RESULT=$(gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='mountpoint -q /srv/library_clear && echo "MOUNTED" || echo "NOT_MOUNTED"' \
+            --quiet)
+          echo "gocryptfs mount status: ${RESULT}"
+          echo "gocryptfs_mount_status=${RESULT}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Verify Docker is installed and running
+        id: verify_docker
+        run: |
+          echo "::group::Verifying Docker"
+          RESULT=$(gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='systemctl is-active docker && docker --version' \
+            --quiet)
+          echo "Docker status: ${RESULT}"
+          echo "docker_status=RUNNING" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Verify Jellyfin container is healthy
+        id: verify_jellyfin
+        run: |
+          echo "::group::Verifying Jellyfin container"
+          RESULT=$(gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='docker inspect --format="{{.State.Status}}" jellyfin 2>/dev/null || echo "NOT_RUNNING"' \
+            --quiet)
+          echo "Jellyfin status: ${RESULT}"
+          echo "jellyfin_status=${RESULT}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Verify Caddy container is healthy
+        id: verify_caddy
+        run: |
+          echo "::group::Verifying Caddy container"
+          RESULT=$(gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='docker inspect --format="{{.State.Status}}" caddy 2>/dev/null || echo "NOT_RUNNING"' \
+            --quiet)
+          echo "Caddy status: ${RESULT}"
+          echo "caddy_status=${RESULT}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Verify HTTP probe (Caddy redirect)
+        id: verify_http
+        if: vars.DOMAIN_NAME != ''
+        run: |
+          echo "::group::Verifying HTTP probe"
+          DOMAIN_NAME="${{ vars.DOMAIN_NAME }}"
+          # Allow time for DNS and certificate provisioning
+          sleep 10
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L --max-time 30 "http://${DOMAIN_NAME}" || echo "FAILED")
+          echo "HTTP probe status: ${HTTP_STATUS}"
+          echo "http_status=${HTTP_STATUS}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Verify HTTPS probe (Jellyfin)
+        id: verify_https
+        if: vars.DOMAIN_NAME != ''
+        run: |
+          echo "::group::Verifying HTTPS probe"
+          DOMAIN_NAME="${{ vars.DOMAIN_NAME }}"
+          # Allow more time for certificate provisioning
+          for i in {1..12}; do
+            HTTPS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "https://${DOMAIN_NAME}" || echo "FAILED")
+            if [ "${HTTPS_STATUS}" = "200" ] || [ "${HTTPS_STATUS}" = "302" ]; then
+              break
+            fi
+            echo "Waiting for HTTPS (attempt ${i}/12)..."
+            sleep 10
+          done
+          echo "HTTPS probe status: ${HTTPS_STATUS}"
+          echo "https_status=${HTTPS_STATUS}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+      - name: Check Caddy HTTPS certificate status
+        id: verify_cert
+        if: vars.DOMAIN_NAME != ''
+        run: |
+          echo "::group::Checking HTTPS certificate"
+          DOMAIN_NAME="${{ vars.DOMAIN_NAME }}"
+          CERT_INFO=$(echo | openssl s_client -connect "${DOMAIN_NAME}:443" -servername "${DOMAIN_NAME}" 2>/dev/null | openssl x509 -noout -dates 2>/dev/null || echo "NO_CERT")
+          echo "Certificate info: ${CERT_INFO}"
+          if echo "${CERT_INFO}" | grep -q "notAfter"; then
+            echo "cert_status=VALID" >> "$GITHUB_OUTPUT"
+          else
+            echo "cert_status=INVALID" >> "$GITHUB_OUTPUT"
+          fi
+          echo "::endgroup::"
+
+      - name: Print deployment summary
+        run: |
+          echo ""
+          echo "============================================================"
+          echo "                 DEPLOYMENT SUMMARY"
+          echo "============================================================"
+          echo ""
+          echo "VM Information:"
+          echo "  - Name: ${VM_NAME}"
+          echo "  - External IP: ${{ steps.get_ip.outputs.external_ip }}"
+          echo "  - Region/Zone: ${{ secrets.GCP_ZONE }}"
+          echo ""
+          echo "Mount Status:"
+          echo "  - /mnt/disks/media: ${{ steps.verify_media_mount.outputs.media_mount_status }}"
+          echo "  - /srv/library_clear (gocryptfs): ${{ steps.verify_gocryptfs_mount.outputs.gocryptfs_mount_status }}"
+          echo ""
+          echo "Service Status:"
+          echo "  - Docker: ${{ steps.verify_docker.outputs.docker_status }}"
+          echo "  - Jellyfin Container: ${{ steps.verify_jellyfin.outputs.jellyfin_status }}"
+          echo "  - Caddy Container: ${{ steps.verify_caddy.outputs.caddy_status }}"
+          echo ""
+          echo "HTTPS Status:"
+          echo "  - HTTP Probe: ${{ steps.verify_http.outputs.http_status || 'SKIPPED' }}"
+          echo "  - HTTPS Probe: ${{ steps.verify_https.outputs.https_status || 'SKIPPED' }}"
+          echo "  - Certificate: ${{ steps.verify_cert.outputs.cert_status || 'SKIPPED' }}"
+          echo ""
+          echo "============================================================"
+          echo ""
+          if [ -n "${{ vars.DOMAIN_NAME }}" ]; then
+            echo "🎬 Your cloud theatre is deployed!"
+            echo "   Visit: https://${{ vars.DOMAIN_NAME }}"
+          else
+            echo "🎬 Your cloud theatre is deployed!"
+            echo "   Visit: http://${{ steps.get_ip.outputs.external_ip }}:8096"
+          fi
+          echo ""
+          echo "============================================================"
