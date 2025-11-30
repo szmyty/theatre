@@ -314,6 +314,42 @@ jobs:
           log "Jellyfin config directory ready"
 
           # ============================================================
+          # Ensure Jellyfin config is NOT using the root disk
+          # If Jellyfin created an old config under /opt/theatre/repo/config/jellyfin
+          # or /root/.config/Jellyfin, remove and force migrate.
+          # Also force-rebuild docker volumes if misconfigured.
+          # ============================================================
+          log "Checking for outdated Jellyfin config paths..."
+          
+          OLD_CONFIG_DIR_1="/opt/theatre/repo/config/jellyfin"
+          OLD_CONFIG_DIR_2="/config"  # inside container the bind mount shows as /config, outside as repo path
+          
+          if [ -d "${OLD_CONFIG_DIR_1}" ] || [ -d "/opt/theatre/repo/config/jellyfin/config" ]; then
+              log "Detected old Jellyfin config directory on small root disk at ${OLD_CONFIG_DIR_1}"
+              rm -rf "${OLD_CONFIG_DIR_1}"
+              log "Removed old config directory to avoid low-space failures"
+          fi
+          
+          # ALSO remove any persisted docker volumes named jellyfin-config
+          if docker volume ls | grep -q "jellyfin-config"; then
+              log "Removing outdated docker Jellyfin config volume..."
+              docker volume rm jellyfin-config || true
+              log "Docker volume jellyfin-config removed"
+          fi
+          
+          # ============================================================
+          # Validate correct new config path is in place
+          # ============================================================
+          if [ ! -d "${JELLYFIN_CONFIG_DIR}" ]; then
+              log "Recreating Jellyfin config directory at ${JELLYFIN_CONFIG_DIR}"
+              mkdir -p "${JELLYFIN_CONFIG_DIR}"
+              chown -R 1000:1000 "${JELLYFIN_CONFIG_DIR}"
+              chmod 755 "${JELLYFIN_CONFIG_DIR}"
+          fi
+          
+          log "Jellyfin config directory confirmed at ${JELLYFIN_CONFIG_DIR}"
+
+          # ============================================================
           # Create gocryptfs password file and environment first
           # ============================================================
           GOCRYPTFS_ENV_DIR="/etc/gocryptfs"
@@ -454,6 +490,14 @@ jobs:
             # Stop existing containers to apply any config changes (new volume paths, etc.)
             log "Stopping any existing containers..."
             docker compose down --remove-orphans 2>/dev/null || true
+            # ============================================================
+            # Safety: remove any leftover root-based jellyfin config binds
+            # ============================================================
+            if docker inspect jellyfin 2>/dev/null | grep -q "/config"; then
+                log "Forcing removal of old root-bind volume for Jellyfin"
+                docker compose down --volumes --remove-orphans || true
+            fi
+
             # Start services and wait for health checks
             # The --wait option may fail if services don't have health checks defined
             if docker compose up --detach --wait 2>/dev/null; then
