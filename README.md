@@ -390,7 +390,7 @@ The Theatre project includes Caddy reverse proxy with automatic HTTPS via Let's 
 2. **Set up DuckDNS dynamic DNS** following [docs/DUCKDNS.md](docs/DUCKDNS.md)
 
 3. **Configure firewall rules** to allow traffic on ports:
-   - Port 80 (HTTP - required for ACME HTTP-01 challenge fallback)
+   - Port 80 (HTTP - for automatic HTTP to HTTPS redirects)
    - Port 443 (HTTPS)
 
 4. **Start the services**:
