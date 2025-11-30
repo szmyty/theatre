@@ -166,16 +166,28 @@ jobs:
         run: |
           echo "::group::Running idempotent provisioning"
 
-          # Create a temporary script file with all variables substituted
+          # Create a temporary secrets file (more secure than command line arguments)
+          cat > /tmp/secrets.env << SECRETSEOF
+          GOCRYPTFS_PASSWORD=${GOCRYPTFS_PASSWORD}
+          DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+          DUCKDNS_DOMAIN=${DUCKDNS_DOMAIN}
+          DOMAIN_NAME=${DOMAIN_NAME}
+          SECRETSEOF
+          chmod 600 /tmp/secrets.env
+
+          # Create the provisioning script
           cat > /tmp/provision.sh << 'PROVISION_EOF'
           #!/bin/bash
           set -euo pipefail
 
-          # Variables passed from workflow
-          GOCRYPTFS_PASSWORD="${1:-}"
-          DUCKDNS_TOKEN="${2:-}"
-          DUCKDNS_DOMAIN="${3:-}"
-          DOMAIN_NAME="${4:-}"
+          # Source secrets from environment file
+          if [ -f /tmp/secrets.env ]; then
+            set -a
+            source /tmp/secrets.env
+            set +a
+            # Clean up secrets file immediately after reading
+            rm -f /tmp/secrets.env
+          fi
 
           log() {
             echo "[$(date --iso-8601=seconds)] $*"
@@ -206,7 +218,22 @@ jobs:
           log "Checking Docker..."
           if ! command -v docker &>/dev/null; then
             log "Installing Docker..."
-            curl --fail --silent --show-error --location https://get.docker.com | bash
+            # Use apt-get for Docker installation (more secure than curl | bash)
+            apt-get update --quiet
+            apt-get install --yes --quiet ca-certificates curl gnupg
+            install -m 0755 -d /etc/apt/keyrings
+            if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+              curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              chmod a+r /etc/apt/keyrings/docker.gpg
+            fi
+            if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
+              echo \
+                "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
+                $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+                tee /etc/apt/sources.list.d/docker.list > /dev/null
+            fi
+            apt-get update --quiet
+            apt-get install --yes --quiet docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
             systemctl enable --now docker
             log "Docker installed"
           else
@@ -264,13 +291,41 @@ jobs:
           log "Encrypted directory ready"
 
           # ============================================================
+          # Create gocryptfs password file and environment first
+          # ============================================================
+          GOCRYPTFS_ENV_DIR="/etc/gocryptfs"
+          PASSFILE="${GOCRYPTFS_ENV_DIR}/passfile"
+          ENV_FILE="${GOCRYPTFS_ENV_DIR}/gocryptfs.env"
+          MOUNT_CLEAR="/srv/library_clear"
+
+          log "Setting up gocryptfs environment..."
+          mkdir -p "${GOCRYPTFS_ENV_DIR}"
+          chmod 700 "${GOCRYPTFS_ENV_DIR}"
+
+          if [ -n "${GOCRYPTFS_PASSWORD:-}" ]; then
+            # Write password to file with restricted permissions (avoids process list exposure)
+            touch "${PASSFILE}"
+            chmod 600 "${PASSFILE}"
+            printf '%s' "${GOCRYPTFS_PASSWORD}" > "${PASSFILE}"
+            log "Password file created"
+          fi
+
+          cat > "${ENV_FILE}" << ENVEOF
+          GOCRYPTFS_ENCRYPTED_DIR=${ENCRYPTED_DIR}
+          GOCRYPTFS_MOUNT_POINT=${MOUNT_CLEAR}
+          GOCRYPTFS_PASSFILE=${PASSFILE}
+          ENVEOF
+          chmod 600 "${ENV_FILE}"
+          log "Environment file created"
+
+          # ============================================================
           # Initialize gocryptfs ONLY if not already initialized
           # ============================================================
           log "Checking gocryptfs initialization..."
           if [ ! -f "${ENCRYPTED_DIR}/gocryptfs.conf" ]; then
-            if [ -n "${GOCRYPTFS_PASSWORD:-}" ]; then
+            if [ -f "${PASSFILE}" ]; then
               log "Initializing gocryptfs..."
-              echo "${GOCRYPTFS_PASSWORD}" | gocryptfs --init --passfile /dev/stdin "${ENCRYPTED_DIR}"
+              gocryptfs --init --passfile "${PASSFILE}" "${ENCRYPTED_DIR}"
               log "gocryptfs initialized"
             else
               log "WARNING: GOCRYPTFS_PASSWORD not set, skipping gocryptfs init"
@@ -282,35 +337,10 @@ jobs:
           # ============================================================
           # Ensure /srv/library_clear exists with correct permissions
           # ============================================================
-          MOUNT_CLEAR="/srv/library_clear"
           log "Ensuring decrypted mount point ${MOUNT_CLEAR} exists..."
           mkdir -p "${MOUNT_CLEAR}"
           chmod 755 "${MOUNT_CLEAR}"
           log "Decrypted mount point ready"
-
-          # ============================================================
-          # Create gocryptfs password file and environment
-          # ============================================================
-          GOCRYPTFS_ENV_DIR="/etc/gocryptfs"
-          PASSFILE="${GOCRYPTFS_ENV_DIR}/passfile"
-          ENV_FILE="${GOCRYPTFS_ENV_DIR}/gocryptfs.env"
-
-          log "Setting up gocryptfs environment..."
-          mkdir -p "${GOCRYPTFS_ENV_DIR}"
-
-          if [ -n "${GOCRYPTFS_PASSWORD:-}" ]; then
-            echo "${GOCRYPTFS_PASSWORD}" > "${PASSFILE}"
-            chmod 600 "${PASSFILE}"
-            log "Password file created"
-          fi
-
-          cat > "${ENV_FILE}" << ENVEOF
-          GOCRYPTFS_ENCRYPTED_DIR=${ENCRYPTED_DIR}
-          GOCRYPTFS_MOUNT_POINT=${MOUNT_CLEAR}
-          GOCRYPTFS_PASSFILE=${PASSFILE}
-          ENVEOF
-          chmod 600 "${ENV_FILE}"
-          log "Environment file created"
 
           # ============================================================
           # Mount decrypted view using gocryptfs with allow_other
@@ -337,10 +367,7 @@ jobs:
           log "Setting up gocryptfs systemd service..."
           if [ ! -d "${REPO_DIR}" ]; then
             log "Cloning repository..."
-            git clone https://github.com/szmyty/theatre.git "${REPO_DIR}"
-          else
-            log "Repository already exists, pulling latest..."
-            cd "${REPO_DIR}" && git pull --ff-only || true
+            git clone --depth 1 https://github.com/szmyty/theatre.git "${REPO_DIR}"
           fi
 
           if [ -f "${REPO_DIR}/infrastructure/systemd/gocryptfs-mount.service" ]; then
@@ -409,17 +436,26 @@ jobs:
 
           chmod +x /tmp/provision.sh
 
+          # Copy secrets file to VM (more secure than command line arguments)
+          gcloud compute scp /tmp/secrets.env "${VM_NAME}:/tmp/secrets.env" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --quiet
+
           # Copy script to VM
           gcloud compute scp /tmp/provision.sh "${VM_NAME}:/tmp/provision.sh" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --zone="${{ secrets.GCP_ZONE }}" \
             --quiet
 
-          # Run the script with arguments
+          # Run the script (secrets are read from file, not command line)
           gcloud compute ssh "${VM_NAME}" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --zone="${{ secrets.GCP_ZONE }}" \
-            --command="sudo /tmp/provision.sh '${GOCRYPTFS_PASSWORD}' '${DUCKDNS_TOKEN}' '${DUCKDNS_DOMAIN}' '${DOMAIN_NAME}'"
+            --command="sudo /tmp/provision.sh"
+
+          # Clean up local secrets file
+          rm -f /tmp/secrets.env
 
           echo "::endgroup::"
         env:
