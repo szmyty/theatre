@@ -27,7 +27,6 @@ theatre/
 │   ├── encrypted/       # gocryptfs encrypted storage
 │   └── decrypted/       # gocryptfs mount point (gitignored)
 ├── scripts/             # Utility scripts (future)
-├── .env.example         # Root environment variables template
 ├── docker-compose.yml   # Docker services configuration
 └── README.md
 ```
@@ -44,7 +43,7 @@ theatre/
 
 1. **Configure environment** (optional):
    ```bash
-   cp .env.example .env
+   cp config/.env.example .env
    # Edit .env with your settings
    ```
 
@@ -62,7 +61,7 @@ theatre/
 
 4. **Access Jellyfin**:
    - HTTP: http://localhost:8096
-   - HTTPS: https://localhost:8920
+   - HTTPS: https://localhost:8920 (requires SSL certificate configuration in Jellyfin)
 
 ### Setup with Encrypted Storage
 

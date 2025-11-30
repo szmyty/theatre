@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     ports:
       - "8096:8096"   # HTTP
-      - "8920:8920"   # HTTPS
+      - "8920:8920"   # HTTPS (requires SSL configuration in Jellyfin)
     volumes:
       - ./config/jellyfin:/config
       - /srv/library_clear:/media:ro
