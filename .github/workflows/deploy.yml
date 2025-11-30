@@ -7,6 +7,13 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  VM_NAME: theatre-vm
+  MACHINE_TYPE: e2-medium
+  IMAGE_FAMILY: debian-12
+  IMAGE_PROJECT: debian-cloud
+  BOOT_DISK_SIZE: 20GB
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -26,12 +33,6 @@ jobs:
 
       - name: Create or update VM
         run: |
-          VM_NAME="theatre-vm"
-          MACHINE_TYPE="e2-medium"
-          IMAGE_FAMILY="debian-12"
-          IMAGE_PROJECT="debian-cloud"
-          BOOT_DISK_SIZE="20GB"
-
           # Check if VM exists
           if gcloud compute instances describe "${VM_NAME}" \
               --project="${{ secrets.GCP_PROJECT_ID }}" \
@@ -42,6 +43,11 @@ jobs:
               --project="${{ secrets.GCP_PROJECT_ID }}" \
               --zone="${{ secrets.GCP_ZONE }}" \
               --metadata-from-file=user-data=infrastructure/cloud-init.yaml
+
+            echo "Restarting VM to apply cloud-init changes..."
+            gcloud compute instances reset "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}"
           else
             echo "Creating VM ${VM_NAME}..."
             gcloud compute instances create "${VM_NAME}" \
@@ -57,8 +63,6 @@ jobs:
 
       - name: Start VM
         run: |
-          VM_NAME="theatre-vm"
-
           # Get current VM status
           STATUS=$(gcloud compute instances describe "${VM_NAME}" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
