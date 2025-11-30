@@ -1,0 +1,11 @@
+[Unit]
+Description=Update DuckDNS dynamic DNS record
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/duckdns/duckdns.env
+ExecStart=/opt/theatre/repo/scripts/update-duckdns.sh
+User=root
+Group=root
