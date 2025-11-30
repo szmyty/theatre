@@ -92,10 +92,9 @@ The Theatre project is built around a layered architecture designed for security
 theatre/
 ├── config/
 │   ├── .env.example          # Environment variables template
-│   ├── caddy/                # Caddy reverse proxy configuration
-│   │   ├── Caddyfile         # Caddy configuration file
-│   │   └── Dockerfile        # Custom Caddy build with DuckDNS module
-│   └── jellyfin/             # Jellyfin configuration (gitignored)
+│   └── caddy/                # Caddy reverse proxy configuration
+│       ├── Caddyfile         # Caddy configuration file
+│       └── Dockerfile        # Custom Caddy build with DuckDNS module
 ├── docs/
 │   ├── SETUP.md              # Detailed encrypted storage setup guide
 │   ├── GOCRYPTFS-SERVICE.md  # Systemd service configuration
@@ -116,6 +115,8 @@ theatre/
 ├── docker-compose.yml        # Docker services configuration
 └── README.md
 ```
+
+**Note:** On deployed VMs, Jellyfin configuration is stored at `/mnt/disks/media/jellyfin_config` on the attached media disk to avoid disk space issues on the root volume.
 
 ## Quick Start
 

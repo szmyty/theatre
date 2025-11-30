@@ -302,6 +302,18 @@ jobs:
           log "Encrypted directory ready"
 
           # ============================================================
+          # Ensure /mnt/disks/media/jellyfin_config exists (unencrypted)
+          # This stores Jellyfin configuration on the media disk instead
+          # of the small root disk to avoid insufficient space errors.
+          # ============================================================
+          JELLYFIN_CONFIG_DIR="${MOUNT_POINT}/jellyfin_config"
+          log "Ensuring Jellyfin config directory ${JELLYFIN_CONFIG_DIR} exists..."
+          mkdir -p "${JELLYFIN_CONFIG_DIR}"
+          chown -R 1000:1000 "${JELLYFIN_CONFIG_DIR}"
+          chmod 755 "${JELLYFIN_CONFIG_DIR}"
+          log "Jellyfin config directory ready"
+
+          # ============================================================
           # Create gocryptfs password file and environment first
           # ============================================================
           GOCRYPTFS_ENV_DIR="/etc/gocryptfs"
@@ -439,6 +451,9 @@ jobs:
           cd "${REPO_DIR}"
           if [ -f "docker-compose.yml" ]; then
             docker compose pull
+            # Stop existing containers to apply any config changes (new volume paths, etc.)
+            log "Stopping any existing containers..."
+            docker compose down --remove-orphans 2>/dev/null || true
             # Start services and wait for health checks
             # The --wait option may fail if services don't have health checks defined
             if docker compose up --detach --wait 2>/dev/null; then
