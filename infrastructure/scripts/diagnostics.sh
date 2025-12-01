@@ -149,8 +149,7 @@ print_container_info() {
     # Jellyfin details
     if docker inspect jellyfin &>/dev/null; then
         echo "Jellyfin container mounts:"
-        docker inspect jellyfin --format='{{range .Mounts}}  {{.Source}} -> {{.Destination}}
-{{end}}' 2>/dev/null
+        docker inspect jellyfin --format='{{range .Mounts}}  {{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' 2>/dev/null | sed '/^$/d'
         echo ""
     fi
 

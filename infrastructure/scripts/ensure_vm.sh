@@ -149,20 +149,24 @@ vm_exists() {
 create_vm() {
     log "Creating VM ${VM_NAME}..."
 
-    local cloud_init_arg=""
+    # Build command arguments
+    local -a gcloud_args=(
+        "${VM_NAME}"
+        "--project=${GCP_PROJECT_ID}"
+        "--zone=${GCP_ZONE}"
+        "--machine-type=${MACHINE_TYPE}"
+        "--image-family=${IMAGE_FAMILY}"
+        "--image-project=${IMAGE_PROJECT}"
+        "--boot-disk-size=${BOOT_DISK_SIZE}"
+        "--tags=http-server,https-server"
+    )
+
+    # Add cloud-init if file exists
     if [[ -n "${CLOUD_INIT_FILE}" ]] && [[ -f "${CLOUD_INIT_FILE}" ]]; then
-        cloud_init_arg="--metadata-from-file=user-data=${CLOUD_INIT_FILE}"
+        gcloud_args+=("--metadata-from-file=user-data=${CLOUD_INIT_FILE}")
     fi
 
-    gcloud compute instances create "${VM_NAME}" \
-        --project="${GCP_PROJECT_ID}" \
-        --zone="${GCP_ZONE}" \
-        --machine-type="${MACHINE_TYPE}" \
-        --image-family="${IMAGE_FAMILY}" \
-        --image-project="${IMAGE_PROJECT}" \
-        --boot-disk-size="${BOOT_DISK_SIZE}" \
-        ${cloud_init_arg:+"${cloud_init_arg}"} \
-        --tags=http-server,https-server
+    gcloud compute instances create "${gcloud_args[@]}"
 
     log_success "VM ${VM_NAME} created"
 }

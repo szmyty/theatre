@@ -97,14 +97,14 @@ verify_env_file() {
         exit 1
     fi
 
-    # Check for required variables
-    if grep -Eq "DOMAIN_NAME=.+" "${env_path}"; then
+    # Check for required variables (must have non-whitespace value)
+    if grep -E "^DOMAIN_NAME=[^[:space:]]" "${env_path}" >/dev/null 2>&1; then
         log_success "DOMAIN_NAME is set"
     else
         log_warn "DOMAIN_NAME is empty or missing"
     fi
 
-    if grep -Eq "DUCKDNS_TOKEN=.+" "${env_path}"; then
+    if grep -E "^DUCKDNS_TOKEN=[^[:space:]]" "${env_path}" >/dev/null 2>&1; then
         log_success "DUCKDNS_TOKEN is set"
     else
         log_warn "DUCKDNS_TOKEN is empty or missing (HTTPS may not work)"
