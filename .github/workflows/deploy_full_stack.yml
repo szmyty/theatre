@@ -491,7 +491,7 @@ jobs:
           DOTENVEOF
 
           # Correct ownership and permissions so docker-compose can read it
-          chown ${SUDO_USER:-$USER}:${SUDO_USER:-$USER} "${ENV_PATH}"
+          chown "${SUDO_USER:-$USER}:${SUDO_USER:-$USER}" "${ENV_PATH}"
           chmod 644 "${ENV_PATH}"
 
           log ".env file written with correct permissions"
@@ -505,13 +505,14 @@ jobs:
             # ============================================================
             # Detect if Jellyfin is using the wrong mount (not /mnt/disks/media/jellyfin_config)
             # This check runs BEFORE stopping containers to detect misconfiguration.
+            # Use docker inspect with JSON format for precise matching.
             # ============================================================
             WRONG_MOUNT=0
             if docker inspect jellyfin &>/dev/null; then
-                # Check if /config mount is NOT pointing to the correct path
-                CORRECT_MOUNT=$(docker inspect jellyfin 2>/dev/null | grep -c "/mnt/disks/media/jellyfin_config:/config" || true)
-                if [ "${CORRECT_MOUNT}" -eq 0 ]; then
-                    log "Detected Jellyfin using incorrect config mount"
+                # Check if /config mount source is exactly /mnt/disks/media/jellyfin_config
+                CONFIG_SOURCE=$(docker inspect jellyfin --format='{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || echo "")
+                if [ "${CONFIG_SOURCE}" != "/mnt/disks/media/jellyfin_config" ]; then
+                    log "Detected Jellyfin using incorrect config mount: ${CONFIG_SOURCE}"
                     WRONG_MOUNT=1
                 fi
             fi
@@ -673,18 +674,20 @@ jobs:
         id: verify_jellyfin_mount
         run: |
           echo "::group::Verifying Jellyfin volume mount"
-          MOUNT_CHECK=$(gcloud compute ssh "${VM_NAME}" \
+          # Use docker inspect with JSON format for precise matching
+          CONFIG_SOURCE=$(gcloud compute ssh "${VM_NAME}" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --zone="${{ secrets.GCP_ZONE }}" \
-            --command='docker inspect jellyfin 2>/dev/null | grep -c "/mnt/disks/media/jellyfin_config:/config" || echo "0"' \
+            --command='docker inspect jellyfin --format="{{range .Mounts}}{{if eq .Destination \"/config\"}}{{.Source}}{{end}}{{end}}" 2>/dev/null || echo ""' \
             --quiet)
-          if [ "${MOUNT_CHECK}" -gt 0 ]; then
+          if [ "${CONFIG_SOURCE}" = "/mnt/disks/media/jellyfin_config" ]; then
             echo "Jellyfin is using correct volume mount: /mnt/disks/media/jellyfin_config:/config"
             echo "jellyfin_mount_status=CORRECT" >> "$GITHUB_OUTPUT"
           else
             echo "ERROR: Jellyfin is NOT using the correct volume mount!"
-            echo "Expected: /mnt/disks/media/jellyfin_config:/config"
-            echo "Actual mount configuration:"
+            echo "Expected: /mnt/disks/media/jellyfin_config"
+            echo "Actual: ${CONFIG_SOURCE}"
+            echo "Full mount configuration:"
             gcloud compute ssh "${VM_NAME}" \
               --project="${{ secrets.GCP_PROJECT_ID }}" \
               --zone="${{ secrets.GCP_ZONE }}" \
