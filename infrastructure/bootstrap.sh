@@ -135,6 +135,32 @@ enable_systemd_service() {
     log "Systemd service enabled successfully"
 }
 
+# Remove stale config/jellyfin directory from repo
+# Docker ALWAYS prioritizes an existing host directory over a declared volume,
+# which completely overrides our intended volume mapping.
+cleanup_stale_config_directory() {
+    log "Checking for stale config/jellyfin directory..."
+    
+    if [[ -d "${PROJECT_ROOT}/config/jellyfin" ]]; then
+        log "Removing stale config/jellyfin directory from repo..."
+        rm -rf "${PROJECT_ROOT}/config/jellyfin"
+        log "Stale directory removed"
+    else
+        log "No stale config/jellyfin directory found"
+    fi
+}
+
+# Ensure correct Jellyfin config directory exists on media disk
+ensure_jellyfin_config_directory() {
+    local jellyfin_config_dir="/mnt/disks/media/jellyfin_config"
+    
+    log "Ensuring correct Jellyfin config directory exists at ${jellyfin_config_dir}..."
+    mkdir -p "${jellyfin_config_dir}"
+    chown -R 1000:1000 "${jellyfin_config_dir}"
+    chmod 755 "${jellyfin_config_dir}"
+    log "Jellyfin config directory ready"
+}
+
 # Cleanup stale Jellyfin volumes
 cleanup_jellyfin_volumes() {
     log "Checking for stale Jellyfin config volumes..."
@@ -160,6 +186,27 @@ cleanup_jellyfin_volumes() {
     fi
 }
 
+# Verify Jellyfin uses correct config mount
+verify_jellyfin_mount() {
+    log "Verifying Jellyfin uses correct config mount..."
+    
+    local expected_source="/mnt/disks/media/jellyfin_config"
+    local config_source
+    config_source=$(docker inspect jellyfin --format='{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || echo "")
+    
+    if [[ "${config_source}" == "${expected_source}" ]]; then
+        log "SUCCESS: Jellyfin is using correct config mount: ${config_source}"
+        return 0
+    else
+        log "ERROR: Jellyfin is NOT using the correct config mount!"
+        log "Expected: ${expected_source}"
+        log "Actual: ${config_source}"
+        log "Full mount configuration:"
+        docker inspect jellyfin --format='{{json .Mounts}}' 2>/dev/null || echo "Container not found"
+        return 1
+    fi
+}
+
 # Start docker-compose
 start_docker_compose() {
     log "Starting docker-compose..."
@@ -171,22 +218,30 @@ start_docker_compose() {
         exit 1
     fi
     
-    # Stop any existing containers before restarting
-    log "Stopping existing containers..."
-    docker compose down --remove-orphans 2>/dev/null || true
+    # Remove stale config/jellyfin directory from repo
+    cleanup_stale_config_directory
     
-    # Check if jellyfin container was using a named volume instead of bind mount
-    local mount_type
-    mount_type=$(docker inspect jellyfin --format='{{range .Mounts}}{{if eq .Destination "/config"}}{{.Type}}{{end}}{{end}}' 2>/dev/null || echo "")
-    if [[ "${mount_type}" == "volume" ]]; then
-        log "Detected jellyfin using named volume for /config, forcing volume removal..."
-        docker compose down --volumes --remove-orphans 2>/dev/null || true
-    fi
+    # Perform full Docker cleanup before compose
+    log "Performing full Docker cleanup..."
+    docker compose down --volumes --remove-orphans 2>/dev/null || true
+    docker rm -f jellyfin 2>/dev/null || true
+    docker volume prune -f 2>/dev/null || true
     
     # Cleanup any remaining jellyfin volumes
     cleanup_jellyfin_volumes
     
+    # Ensure correct Jellyfin config directory exists on media disk
+    ensure_jellyfin_config_directory
+    
+    # Start containers
     docker compose up --detach
+    
+    # Verify correct mount after starting containers
+    sleep 5  # Give container time to start
+    if ! verify_jellyfin_mount; then
+        log "ERROR: Deploy failed - Jellyfin is using incorrect mount"
+        exit 1
+    fi
     
     log "docker-compose started successfully"
 }

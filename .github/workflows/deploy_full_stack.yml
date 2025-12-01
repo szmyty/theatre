@@ -441,6 +441,23 @@ jobs:
           if [ ! -d "${REPO_DIR}" ]; then
             log "Cloning repository from ${REPO_URL}..."
             git clone --depth 1 "${REPO_URL}" "${REPO_DIR}"
+          else
+            log "Updating repository in ${REPO_DIR}..."
+            cd "${REPO_DIR}"
+            git fetch --depth 1 origin
+            git reset --hard origin/HEAD
+          fi
+
+          # ============================================================
+          # CRITICAL: Remove stale config/jellyfin directory from repo clone
+          # Docker ALWAYS prioritizes an existing host directory over a declared
+          # volume, which completely overrides our intended volume mapping.
+          # This directory must NEVER exist in the repo clone.
+          # ============================================================
+          if [ -d "${REPO_DIR}/config/jellyfin" ]; then
+            log "Removing stale config/jellyfin directory from repo clone..."
+            rm -rf "${REPO_DIR}/config/jellyfin"
+            log "Stale directory removed"
           fi
 
           if [ -f "${REPO_DIR}/infrastructure/systemd/gocryptfs-mount.service" ]; then
@@ -503,31 +520,34 @@ jobs:
           cd "${REPO_DIR}"
           if [ -f "docker-compose.yml" ]; then
             # ============================================================
-            # Detect if Jellyfin is using the wrong mount (not /mnt/disks/media/jellyfin_config)
-            # This check runs BEFORE stopping containers to detect misconfiguration.
-            # Use docker inspect with JSON format for precise matching.
+            # CRITICAL: Full Docker cleanup before compose
+            # This ensures no stale containers, volumes, or orphans interfere
+            # with the correct volume mappings.
             # ============================================================
-            WRONG_MOUNT=0
-            if docker inspect jellyfin &>/dev/null; then
-                # Check if /config mount source is exactly /mnt/disks/media/jellyfin_config
-                CONFIG_SOURCE=$(docker inspect jellyfin --format='{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || echo "")
-                if [ "${CONFIG_SOURCE}" != "/mnt/disks/media/jellyfin_config" ]; then
-                    log "Detected Jellyfin using incorrect config mount: ${CONFIG_SOURCE}"
-                    WRONG_MOUNT=1
-                fi
+            log "Performing full Docker cleanup..."
+            docker compose down --volumes --remove-orphans || true
+            docker rm -f jellyfin 2>/dev/null || true
+            docker volume prune -f || true
+
+            # Remove any jellyfin-related volumes that may have been created
+            # with various project name prefixes
+            STALE_VOLS=$(docker volume ls --quiet --filter "name=jellyfin" 2>/dev/null || true)
+            if [ -n "${STALE_VOLS}" ]; then
+                log "Removing stale jellyfin volumes: ${STALE_VOLS}"
+                echo "${STALE_VOLS}" | while IFS= read -r vol; do
+                    if [ -n "${vol}" ]; then
+                        docker volume rm "${vol}" 2>/dev/null || true
+                    fi
+                done
             fi
 
-            if [ "${WRONG_MOUNT}" -eq 1 ]; then
-                log "Purging Jellyfin container and volumes due to incorrect mount..."
-                docker compose down --volumes --remove-orphans || true
-                docker rm -f jellyfin 2>/dev/null || true
-                # Remove any jellyfin-related volumes
-                for vol in $(docker volume ls -q --filter name=jellyfin 2>/dev/null); do
-                    docker volume rm "${vol}" 2>/dev/null || true
-                done
-                # Remove old config directory on root disk if it exists
-                rm -rf /opt/theatre/repo/config/jellyfin
-                log "Jellyfin container and volumes purged"
+            # ============================================================
+            # Remove stale config/jellyfin directory again before compose
+            # (in case repo was updated or directory was recreated)
+            # ============================================================
+            if [ -d "${REPO_DIR}/config/jellyfin" ]; then
+                log "Removing stale config/jellyfin directory..."
+                rm -rf "${REPO_DIR}/config/jellyfin"
             fi
 
             # ============================================================
@@ -537,25 +557,6 @@ jobs:
             mkdir -p /mnt/disks/media/jellyfin_config
             chown -R 1000:1000 /mnt/disks/media/jellyfin_config
             chmod 755 /mnt/disks/media/jellyfin_config
-
-            # ============================================================
-            # Always restart docker-compose cleanly with volumes removed
-            # This ensures updated volume mappings are always applied.
-            # ============================================================
-            log "Stopping any existing containers and removing orphans/volumes..."
-            docker compose down --volumes --remove-orphans || true
-
-            # Final cleanup: remove any remaining jellyfin-related volumes
-            # that may have been created with various project name prefixes
-            REMAINING_VOLS=$(docker volume ls --quiet --filter "name=jellyfin" 2>/dev/null || true)
-            if [ -n "${REMAINING_VOLS}" ]; then
-                log "Cleaning up remaining jellyfin volumes: ${REMAINING_VOLS}"
-                echo "${REMAINING_VOLS}" | while IFS= read -r vol; do
-                    if [ -n "${vol}" ]; then
-                        docker volume rm "${vol}" 2>/dev/null || true
-                    fi
-                done
-            fi
 
             # Pull latest images
             docker compose pull
@@ -569,6 +570,24 @@ jobs:
               log "Starting services without health check wait..."
               docker compose up --detach
               log "Docker services started (health checks may still be pending)"
+            fi
+
+            # ============================================================
+            # CRITICAL: Verify correct mount after starting containers
+            # If this check fails, the deploy should fail immediately.
+            # ============================================================
+            log "Verifying Jellyfin uses correct config mount..."
+            sleep 5  # Give container time to start
+            CONFIG_SOURCE=$(docker inspect jellyfin --format='{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || echo "")
+            if [ "${CONFIG_SOURCE}" = "/mnt/disks/media/jellyfin_config" ]; then
+                log "SUCCESS: Jellyfin is using correct config mount: ${CONFIG_SOURCE}"
+            else
+                log "ERROR: Jellyfin is NOT using the correct config mount!"
+                log "Expected: /mnt/disks/media/jellyfin_config"
+                log "Actual: ${CONFIG_SOURCE}"
+                log "Full mount configuration:"
+                docker inspect jellyfin --format='{{json .Mounts}}' 2>/dev/null || echo "Container not found"
+                exit 1
             fi
           fi
 
