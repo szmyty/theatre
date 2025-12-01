@@ -320,19 +320,19 @@ jobs:
           # Also force-rebuild docker volumes if misconfigured.
           # ============================================================
           log "Checking for outdated Jellyfin config paths..."
-          
+
           OLD_CONFIG_DIR_1="/opt/theatre/repo/config/jellyfin"
           OLD_CONFIG_DIR_2="/config"  # inside container the bind mount shows as /config, outside as repo path
-          
+
           if [ -d "${OLD_CONFIG_DIR_1}" ] || [ -d "/opt/theatre/repo/config/jellyfin/config" ]; then
               log "Detected old Jellyfin config directory on small root disk at ${OLD_CONFIG_DIR_1}"
               rm -rf "${OLD_CONFIG_DIR_1}"
               log "Removed old config directory to avoid low-space failures"
           fi
-          
+
           # Remove ANY docker volumes that may have been used for Jellyfin config.
-          # Docker Compose creates implicit volumes with project-name prefixes 
-          # (e.g., repo_jellyfin_config, theatre_jellyfin_config) which take 
+          # Docker Compose creates implicit volumes with project-name prefixes
+          # (e.g., repo_jellyfin_config, theatre_jellyfin_config) which take
           # precedence over updated bind mounts if not explicitly removed.
           log "Checking for stale Jellyfin config volumes..."
           STALE_VOLUMES=$(docker volume ls --quiet --filter "name=jellyfin" 2>/dev/null || true)
@@ -349,7 +349,7 @@ jobs:
           else
               log "No stale Jellyfin volumes found"
           fi
-          
+
           # ============================================================
           # Validate correct new config path is in place
           # ============================================================
@@ -359,7 +359,7 @@ jobs:
               chown -R 1000:1000 "${JELLYFIN_CONFIG_DIR}"
               chmod 755 "${JELLYFIN_CONFIG_DIR}"
           fi
-          
+
           log "Jellyfin config directory confirmed at ${JELLYFIN_CONFIG_DIR}"
 
           # ============================================================
@@ -489,8 +489,12 @@ jobs:
           DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
           JELLYFIN_URL=https://${DOMAIN_NAME}
           DOTENVEOF
-          chmod 600 "${ENV_PATH}"
-          log ".env file written to ${ENV_PATH}"
+
+          # Correct ownership and permissions so docker-compose can read it
+          chown ${SUDO_USER:-$USER}:${SUDO_USER:-$USER} "${ENV_PATH}"
+          chmod 644 "${ENV_PATH}"
+
+          log ".env file written with correct permissions"
 
           # ============================================================
           # Run docker-compose to start all services (Jellyfin + Caddy)
@@ -498,23 +502,47 @@ jobs:
           log "Starting docker-compose services..."
           cd "${REPO_DIR}"
           if [ -f "docker-compose.yml" ]; then
-            docker compose pull
-            # Stop existing containers to apply any config changes (new volume paths, etc.)
-            log "Stopping any existing containers..."
-            docker compose down --remove-orphans 2>/dev/null || true
-            
             # ============================================================
-            # Safety: detect and remove any named volumes used for /config
-            # Docker prefers existing named volumes over new bind mounts, 
-            # so we must explicitly remove them to fix the mount path.
-            # Check if jellyfin container was using a volume (not bind) mount.
+            # Detect if Jellyfin is using the wrong mount (not /mnt/disks/media/jellyfin_config)
+            # This check runs BEFORE stopping containers to detect misconfiguration.
             # ============================================================
-            MOUNT_TYPE=$(docker inspect jellyfin --format='{{range .Mounts}}{{if eq .Destination "/config"}}{{.Type}}{{end}}{{end}}' 2>/dev/null || echo "")
-            if [ "${MOUNT_TYPE}" = "volume" ]; then
-                log "Detected jellyfin using named volume for /config instead of bind mount"
-                log "Removing all project volumes to force bind mount usage..."
-                docker compose down --volumes --remove-orphans 2>/dev/null || true
+            WRONG_MOUNT=0
+            if docker inspect jellyfin &>/dev/null; then
+                # Check if /config mount is NOT pointing to the correct path
+                CORRECT_MOUNT=$(docker inspect jellyfin 2>/dev/null | grep -c "/mnt/disks/media/jellyfin_config:/config" || true)
+                if [ "${CORRECT_MOUNT}" -eq 0 ]; then
+                    log "Detected Jellyfin using incorrect config mount"
+                    WRONG_MOUNT=1
+                fi
             fi
+
+            if [ "${WRONG_MOUNT}" -eq 1 ]; then
+                log "Purging Jellyfin container and volumes due to incorrect mount..."
+                docker compose down --volumes --remove-orphans || true
+                docker rm -f jellyfin 2>/dev/null || true
+                # Remove any jellyfin-related volumes
+                for vol in $(docker volume ls -q --filter name=jellyfin 2>/dev/null); do
+                    docker volume rm "${vol}" 2>/dev/null || true
+                done
+                # Remove old config directory on root disk if it exists
+                rm -rf /opt/theatre/repo/config/jellyfin
+                log "Jellyfin container and volumes purged"
+            fi
+
+            # ============================================================
+            # Ensure correct Jellyfin config directory exists on media disk
+            # ============================================================
+            log "Ensuring correct Jellyfin config directory exists..."
+            mkdir -p /mnt/disks/media/jellyfin_config
+            chown -R 1000:1000 /mnt/disks/media/jellyfin_config
+            chmod 755 /mnt/disks/media/jellyfin_config
+
+            # ============================================================
+            # Always restart docker-compose cleanly with volumes removed
+            # This ensures updated volume mappings are always applied.
+            # ============================================================
+            log "Stopping any existing containers and removing orphans/volumes..."
+            docker compose down --volumes --remove-orphans || true
 
             # Final cleanup: remove any remaining jellyfin-related volumes
             # that may have been created with various project name prefixes
@@ -527,6 +555,9 @@ jobs:
                     fi
                 done
             fi
+
+            # Pull latest images
+            docker compose pull
 
             # Start services and wait for health checks
             # The --wait option may fail if services don't have health checks defined
@@ -638,25 +669,51 @@ jobs:
           echo "caddy_status=${RESULT}" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
 
+      - name: Verify Jellyfin uses correct volume mount
+        id: verify_jellyfin_mount
+        run: |
+          echo "::group::Verifying Jellyfin volume mount"
+          MOUNT_CHECK=$(gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='docker inspect jellyfin 2>/dev/null | grep -c "/mnt/disks/media/jellyfin_config:/config" || echo "0"' \
+            --quiet)
+          if [ "${MOUNT_CHECK}" -gt 0 ]; then
+            echo "Jellyfin is using correct volume mount: /mnt/disks/media/jellyfin_config:/config"
+            echo "jellyfin_mount_status=CORRECT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: Jellyfin is NOT using the correct volume mount!"
+            echo "Expected: /mnt/disks/media/jellyfin_config:/config"
+            echo "Actual mount configuration:"
+            gcloud compute ssh "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --command='docker inspect jellyfin --format="{{json .Mounts}}" 2>/dev/null || echo "Container not found"' \
+              --quiet
+            echo "jellyfin_mount_status=INCORRECT" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "::endgroup::"
+
       - name: Verify .env file contains required variables
         id: verify_env
         run: |
           echo "::group::Verifying .env file"
-      
-          # Print the .env file (requires sudo because it's chmod 600)
+
+          # Print the .env file (now chmod 644, readable without sudo)
           gcloud compute ssh "${VM_NAME}" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --zone="${{ secrets.GCP_ZONE }}" \
-            --command='sudo cat /opt/theatre/repo/.env' \
+            --command='cat /opt/theatre/repo/.env' \
             --quiet
-      
+
           # Validate DUCKDNS_TOKEN and DOMAIN_NAME are present and non-empty
           ENV_CHECK=$(gcloud compute ssh "${VM_NAME}" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --zone="${{ secrets.GCP_ZONE }}" \
-            --command='sudo grep -Eq "DUCKDNS_TOKEN=.+" /opt/theatre/repo/.env && sudo grep -Eq "DOMAIN_NAME=.+" /opt/theatre/repo/.env && echo "VALID" || echo "INVALID"' \
+            --command='grep -Eq "DUCKDNS_TOKEN=.+" /opt/theatre/repo/.env && grep -Eq "DOMAIN_NAME=.+" /opt/theatre/repo/.env && echo "VALID" || echo "INVALID"' \
             --quiet)
-      
+
           echo "Environment file status: ${ENV_CHECK}"
           echo "env_status=${ENV_CHECK}" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
@@ -723,6 +780,7 @@ jobs:
           echo "Mount Status:"
           echo "  - /mnt/disks/media: ${{ steps.verify_media_mount.outputs.media_mount_status }}"
           echo "  - /srv/library_clear (gocryptfs): ${{ steps.verify_gocryptfs_mount.outputs.gocryptfs_mount_status }}"
+          echo "  - Jellyfin Config Volume: ${{ steps.verify_jellyfin_mount.outputs.jellyfin_mount_status || 'SKIPPED' }}"
           echo ""
           echo "Service Status:"
           echo "  - Docker: ${{ steps.verify_docker.outputs.docker_status }}"
