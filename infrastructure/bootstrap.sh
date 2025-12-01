@@ -15,6 +15,11 @@ SYSTEMD_SERVICE_FILE="/etc/systemd/system/gocryptfs-mount.service"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
 
+# Docker and containerd data root configuration
+MEDIA_DISK_MOUNT="/mnt/disks/media"
+DOCKER_DATA_ROOT="${MEDIA_DISK_MOUNT}/docker"
+CONTAINERD_DATA_ROOT="${MEDIA_DISK_MOUNT}/containerd"
+
 # Helper function for logging
 log() {
     echo "[$(date --iso-8601=seconds)] $*"
@@ -44,6 +49,123 @@ install_docker() {
     systemctl enable --now docker
     
     log "Docker installed successfully"
+}
+
+# Migrate Docker and containerd data root to media disk
+# This prevents "no space left on device" errors caused by Docker
+# storing images, layers, and snapshots on the small root disk.
+migrate_docker_data_root() {
+    log "Checking Docker and containerd data root migration..."
+    
+    # Check if media disk is mounted
+    if [[ ! -d "${MEDIA_DISK_MOUNT}" ]] || ! mountpoint -q "${MEDIA_DISK_MOUNT}" 2>/dev/null; then
+        log "WARNING: Media disk not mounted at ${MEDIA_DISK_MOUNT}, skipping migration"
+        return 0
+    fi
+    
+    # Check if migration is needed (Docker using root disk)
+    local current_docker_root
+    current_docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
+    
+    if [[ "${current_docker_root}" == "/var/lib/docker" ]]; then
+        log "Docker is currently using root disk at ${current_docker_root}, migrating..."
+        
+        # Stop Docker and containerd before migration
+        log "Stopping Docker and containerd..."
+        systemctl stop docker || true
+        systemctl stop containerd || true
+        
+        # Create new directories on media disk
+        log "Creating Docker and containerd directories on media disk..."
+        mkdir -p "${DOCKER_DATA_ROOT}"
+        mkdir -p "${CONTAINERD_DATA_ROOT}"
+        
+        # Sync existing data (idempotent)
+        log "Syncing existing Docker data to media disk..."
+        if [[ -d /var/lib/docker ]]; then
+            rsync -aP /var/lib/docker/ "${DOCKER_DATA_ROOT}/" || true
+        fi
+        log "Syncing existing containerd data to media disk..."
+        if [[ -d /var/lib/containerd ]]; then
+            rsync -aP /var/lib/containerd/ "${CONTAINERD_DATA_ROOT}/" || true
+        fi
+        
+        # Configure Docker daemon.json with new data-root
+        log "Configuring Docker daemon.json..."
+        mkdir -p /etc/docker
+        cat > /etc/docker/daemon.json << EOF
+{
+  "data-root": "${DOCKER_DATA_ROOT}"
+}
+EOF
+        chmod 644 /etc/docker/daemon.json
+        
+        # Configure containerd with new root path
+        log "Configuring containerd..."
+        mkdir -p /etc/containerd
+        if [[ ! -f /etc/containerd/config.toml ]] || grep -q 'root = "/var/lib/containerd"' /etc/containerd/config.toml 2>/dev/null; then
+            containerd config default > /etc/containerd/config.toml
+        fi
+        sed -i "s|root = \"/var/lib/containerd\"|root = \"${CONTAINERD_DATA_ROOT}\"|g" /etc/containerd/config.toml
+        chmod 644 /etc/containerd/config.toml
+        
+        # Reload systemd and start services
+        log "Reloading systemd and starting Docker and containerd..."
+        systemctl daemon-reload
+        systemctl start containerd
+        systemctl start docker
+        
+        # Wait for Docker to be ready
+        log "Waiting for Docker to be ready..."
+        for _ in {1..30}; do
+            if docker info &>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        
+        # Remove old root-disk directories to free space
+        log "Removing old Docker and containerd directories from root disk..."
+        rm -rf /var/lib/docker
+        rm -rf /var/lib/containerd
+        
+        log "Docker and containerd migration completed"
+    else
+        log "Docker is already using media disk at ${current_docker_root}"
+        # Ensure Docker and containerd are running
+        systemctl start containerd || true
+        systemctl start docker || true
+    fi
+    
+    # Verify Docker and containerd are using correct paths
+    verify_docker_data_root
+}
+
+# Verify Docker and containerd are using the correct data paths
+verify_docker_data_root() {
+    log "Verifying Docker data root..."
+    local docker_root_after
+    docker_root_after=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "UNKNOWN")
+    
+    if [[ "${docker_root_after}" == "${DOCKER_DATA_ROOT}" ]]; then
+        log "SUCCESS: Docker is using correct data root: ${docker_root_after}"
+    else
+        log "WARNING: Docker is NOT using expected data root"
+        log "Expected: ${DOCKER_DATA_ROOT}"
+        log "Actual: ${docker_root_after}"
+    fi
+    
+    log "Verifying containerd root..."
+    local containerd_root_after
+    containerd_root_after=$(containerd config dump 2>/dev/null | grep -E '^root\s*=' | head -1 | awk -F'"' '{print $2}' || echo "UNKNOWN")
+    
+    if [[ "${containerd_root_after}" == "${CONTAINERD_DATA_ROOT}" ]]; then
+        log "SUCCESS: containerd is using correct root: ${containerd_root_after}"
+    else
+        log "WARNING: containerd is NOT using expected root"
+        log "Expected: ${CONTAINERD_DATA_ROOT}"
+        log "Actual: ${containerd_root_after}"
+    fi
 }
 
 # Install gocryptfs
@@ -252,6 +374,7 @@ main() {
     
     check_root
     install_docker
+    migrate_docker_data_root
     install_gocryptfs
     create_encrypted_directory
     create_mount_directory

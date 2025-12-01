@@ -293,6 +293,111 @@ jobs:
           fi
 
           # ============================================================
+          # CRITICAL: Migrate Docker and containerd data root to media disk
+          # This prevents "no space left on device" errors caused by Docker
+          # storing images, layers, and snapshots on the small root disk.
+          # ============================================================
+          DOCKER_DATA_ROOT="${MOUNT_POINT}/docker"
+          CONTAINERD_DATA_ROOT="${MOUNT_POINT}/containerd"
+
+          log "Migrating Docker and containerd data root to media disk..."
+
+          # Check if migration is needed (Docker using root disk)
+          CURRENT_DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
+          if [ "${CURRENT_DOCKER_ROOT}" = "/var/lib/docker" ]; then
+            log "Docker is currently using root disk at ${CURRENT_DOCKER_ROOT}, migrating..."
+
+            # Stop Docker and containerd before migration
+            log "Stopping Docker and containerd..."
+            systemctl stop docker || true
+            systemctl stop containerd || true
+
+            # Create new directories on media disk
+            log "Creating Docker and containerd directories on media disk..."
+            mkdir -p "${DOCKER_DATA_ROOT}"
+            mkdir -p "${CONTAINERD_DATA_ROOT}"
+
+            # Sync existing data (idempotent)
+            log "Syncing existing Docker data to media disk..."
+            if [ -d /var/lib/docker ]; then
+              rsync -aP /var/lib/docker/ "${DOCKER_DATA_ROOT}/" || true
+            fi
+            log "Syncing existing containerd data to media disk..."
+            if [ -d /var/lib/containerd ]; then
+              rsync -aP /var/lib/containerd/ "${CONTAINERD_DATA_ROOT}/" || true
+            fi
+
+            # Configure Docker daemon.json with new data-root
+            log "Configuring Docker daemon.json..."
+            mkdir -p /etc/docker
+            cat > /etc/docker/daemon.json << DOCKEREOF
+          {
+            "data-root": "${DOCKER_DATA_ROOT}"
+          }
+          DOCKEREOF
+            chmod 644 /etc/docker/daemon.json
+
+            # Configure containerd with new root path
+            log "Configuring containerd..."
+            mkdir -p /etc/containerd
+            if [ ! -f /etc/containerd/config.toml ] || grep -q 'root = "/var/lib/containerd"' /etc/containerd/config.toml 2>/dev/null; then
+              containerd config default > /etc/containerd/config.toml
+            fi
+            sed -i "s|root = \"/var/lib/containerd\"|root = \"${CONTAINERD_DATA_ROOT}\"|g" /etc/containerd/config.toml
+            chmod 644 /etc/containerd/config.toml
+
+            # Reload systemd and start services
+            log "Reloading systemd and starting Docker and containerd..."
+            systemctl daemon-reload
+            systemctl start containerd
+            systemctl start docker
+
+            # Wait for Docker to be ready
+            log "Waiting for Docker to be ready..."
+            for i in {1..30}; do
+              if docker info &>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+
+            # Remove old root-disk directories to free space
+            log "Removing old Docker and containerd directories from root disk..."
+            rm -rf /var/lib/docker
+            rm -rf /var/lib/containerd
+
+            log "Docker and containerd migration completed"
+          else
+            log "Docker is already using media disk at ${CURRENT_DOCKER_ROOT}"
+            # Ensure Docker and containerd are running
+            systemctl start containerd || true
+            systemctl start docker || true
+          fi
+
+          # Verify Docker and containerd are using correct paths
+          log "Verifying Docker data root..."
+          DOCKER_ROOT_AFTER=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "UNKNOWN")
+          if [ "${DOCKER_ROOT_AFTER}" = "${DOCKER_DATA_ROOT}" ]; then
+            log "SUCCESS: Docker is using correct data root: ${DOCKER_ROOT_AFTER}"
+          else
+            log "ERROR: Docker is NOT using correct data root!"
+            log "Expected: ${DOCKER_DATA_ROOT}"
+            log "Actual: ${DOCKER_ROOT_AFTER}"
+            exit 1
+          fi
+
+          log "Verifying containerd root..."
+          CONTAINERD_ROOT_AFTER=$(containerd config dump 2>/dev/null | grep -E '^root\s*=' | head -1 | awk -F'"' '{print $2}' || echo "UNKNOWN")
+          if [ "${CONTAINERD_ROOT_AFTER}" = "${CONTAINERD_DATA_ROOT}" ]; then
+            log "SUCCESS: containerd is using correct root: ${CONTAINERD_ROOT_AFTER}"
+          else
+            log "ERROR: containerd is NOT using correct root!"
+            log "Expected: ${CONTAINERD_DATA_ROOT}"
+            log "Actual: ${CONTAINERD_ROOT_AFTER}"
+            exit 1
+          fi
+
+          # ============================================================
           # Ensure /mnt/disks/media/.library_encrypted exists
           # ============================================================
           ENCRYPTED_DIR="${MOUNT_POINT}/.library_encrypted"
@@ -663,6 +768,50 @@ jobs:
           echo "docker_status=RUNNING" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
 
+      - name: Verify Docker data root is on media disk
+        id: verify_docker_root
+        run: |
+          echo "::group::Verifying Docker data root"
+          DOCKER_ROOT=$(gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='docker info --format "{{.DockerRootDir}}"' \
+            --quiet)
+          echo "Docker Root Dir: ${DOCKER_ROOT}"
+          if [ "${DOCKER_ROOT}" = "/mnt/disks/media/docker" ]; then
+            echo "SUCCESS: Docker is using media disk"
+            echo "docker_root_status=CORRECT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: Docker is NOT using media disk!"
+            echo "Expected: /mnt/disks/media/docker"
+            echo "Actual: ${DOCKER_ROOT}"
+            echo "docker_root_status=INCORRECT" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: Verify containerd root is on media disk
+        id: verify_containerd_root
+        run: |
+          echo "::group::Verifying containerd root"
+          CONTAINERD_ROOT=$(gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='containerd config dump 2>/dev/null | grep -E "^root\s*=" | head -1 | awk -F"\"" "{print \$2}"' \
+            --quiet)
+          echo "containerd root: ${CONTAINERD_ROOT}"
+          if [ "${CONTAINERD_ROOT}" = "/mnt/disks/media/containerd" ]; then
+            echo "SUCCESS: containerd is using media disk"
+            echo "containerd_root_status=CORRECT" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: containerd is NOT using media disk!"
+            echo "Expected: /mnt/disks/media/containerd"
+            echo "Actual: ${CONTAINERD_ROOT}"
+            echo "containerd_root_status=INCORRECT" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "::endgroup::"
+
       - name: Verify Jellyfin container is healthy
         id: verify_jellyfin
         run: |
@@ -806,6 +955,8 @@ jobs:
           echo ""
           echo "Service Status:"
           echo "  - Docker: ${{ steps.verify_docker.outputs.docker_status }}"
+          echo "  - Docker Root Dir: ${{ steps.verify_docker_root.outputs.docker_root_status || 'SKIPPED' }}"
+          echo "  - containerd Root: ${{ steps.verify_containerd_root.outputs.containerd_root_status || 'SKIPPED' }}"
           echo "  - Jellyfin Container: ${{ steps.verify_jellyfin.outputs.jellyfin_status }}"
           echo "  - Caddy Container: ${{ steps.verify_caddy.outputs.caddy_status }}"
           echo ""
