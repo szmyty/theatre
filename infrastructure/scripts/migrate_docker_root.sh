@@ -7,6 +7,17 @@
 # media disk to prevent "no space left on device" errors on the small root disk.
 # It is idempotent - safe to run multiple times.
 #
+# NOTE: For separate containerd migration, use migrate_containerd_root.sh
+# This script handles both for backward compatibility, but the order is:
+#   1. Stop containerd
+#   2. Stop Docker
+#   3. Sync data
+#   4. Edit configs
+#   5. Remove old directories
+#   6. Restart containerd
+#   7. Restart Docker
+#   8. Verify
+#
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
@@ -86,25 +97,77 @@ install_rsync() {
     fi
 }
 
-# Stop Docker and containerd
+# Stop Docker and containerd (in correct order)
 stop_services() {
-    log "Stopping Docker and containerd..."
+    log "Stopping Docker and containerd (in correct order)..."
+    
+    # Stop Docker first (depends on containerd)
+    log "Stopping Docker..."
+    systemctl stop docker.socket 2>/dev/null || true
     systemctl stop docker 2>/dev/null || true
+    
+    # Wait for Docker to stop
+    local attempts=0
+    while [[ $attempts -lt 30 ]]; do
+        if ! systemctl is-active --quiet docker 2>/dev/null; then
+            break
+        fi
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+    
+    # Then stop containerd
+    log "Stopping containerd..."
     systemctl stop containerd 2>/dev/null || true
-    log "Services stopped"
+    
+    # Wait for containerd to stop
+    attempts=0
+    while [[ $attempts -lt 30 ]]; do
+        if ! systemctl is-active --quiet containerd 2>/dev/null; then
+            break
+        fi
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+    
+    log_success "Services stopped"
 }
 
-# Start Docker and containerd
+# Start Docker and containerd (in correct order)
 start_services() {
-    log "Starting containerd and Docker..."
+    log "Starting containerd and Docker (in correct order)..."
+    
+    # Reload systemd to pick up config changes
     systemctl daemon-reload
+    
+    # Start containerd first (Docker depends on it)
+    log "Starting containerd..."
     systemctl start containerd
+    
+    # Wait for containerd to be ready
+    local attempts=0
+    local max_attempts=30
+    while [[ $attempts -lt $max_attempts ]]; do
+        if systemctl is-active --quiet containerd 2>/dev/null; then
+            log "containerd is running"
+            break
+        fi
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+    
+    if [[ $attempts -ge $max_attempts ]]; then
+        log_error "containerd failed to start"
+        exit 1
+    fi
+    
+    # Then start Docker
+    log "Starting Docker..."
     systemctl start docker
 
     # Wait for Docker to be ready
     log "Waiting for Docker to be ready..."
-    local attempts=0
-    local max_attempts=30
+    attempts=0
     while [[ $attempts -lt $max_attempts ]]; do
         if docker info &>/dev/null; then
             log_success "Docker is ready"
@@ -120,8 +183,25 @@ start_services() {
 
 # Migrate Docker data root
 migrate_docker_root() {
+    # Check for partial migration state and auto-heal
+    log "Checking for partial migration state..."
+    
     local current_docker_root
     current_docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
+    
+    # Check if already migrated but old directory still exists (needs cleanup)
+    if [[ "${current_docker_root}" == "${DOCKER_DATA_ROOT}" ]]; then
+        if [[ -d /var/lib/docker ]] || [[ -d /var/lib/containerd ]]; then
+            log_warn "Migration was partially complete - cleaning up old directories..."
+            stop_services
+            rm -rf /var/lib/docker
+            rm -rf /var/lib/containerd
+            start_services
+            log_success "Partial migration cleanup completed"
+        fi
+        log "Docker is already using correct data root at ${current_docker_root}"
+        return 0
+    fi
 
     if [[ "${current_docker_root}" != "/var/lib/docker" ]]; then
         log "Docker is already using custom data root at ${current_docker_root}"
@@ -220,6 +300,20 @@ verify_data_roots() {
         log_error "Actual: ${containerd_root_after}"
         exit 1
     fi
+    
+    # Verify old directories no longer exist (critical for preventing regression)
+    log "Verifying old directories are removed..."
+    if [[ -d /var/lib/docker ]]; then
+        log_error "Old Docker directory still exists at /var/lib/docker!"
+        log_error "This can cause Docker to use the wrong root"
+        exit 1
+    fi
+    if [[ -d /var/lib/containerd ]]; then
+        log_error "Old containerd directory still exists at /var/lib/containerd!"
+        log_error "This can cause containerd to use the wrong root"
+        exit 1
+    fi
+    log_success "Old directories have been removed"
 }
 
 main() {
