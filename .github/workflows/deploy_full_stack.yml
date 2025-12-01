@@ -330,11 +330,24 @@ jobs:
               log "Removed old config directory to avoid low-space failures"
           fi
           
-          # ALSO remove any persisted docker volumes named jellyfin-config
-          if docker volume ls | grep -q "jellyfin-config"; then
-              log "Removing outdated docker Jellyfin config volume..."
-              docker volume rm jellyfin-config || true
-              log "Docker volume jellyfin-config removed"
+          # Remove ANY docker volumes that may have been used for Jellyfin config.
+          # Docker Compose creates implicit volumes with project-name prefixes 
+          # (e.g., repo_jellyfin_config, theatre_jellyfin_config) which take 
+          # precedence over updated bind mounts if not explicitly removed.
+          log "Checking for stale Jellyfin config volumes..."
+          STALE_VOLUMES=$(docker volume ls --quiet --filter "name=jellyfin" 2>/dev/null || true)
+          if [ -n "${STALE_VOLUMES}" ]; then
+              log "Found stale Jellyfin volumes: ${STALE_VOLUMES}"
+              # Use while loop to properly handle volume names
+              echo "${STALE_VOLUMES}" | while IFS= read -r vol; do
+                  if [ -n "${vol}" ]; then
+                      log "Removing stale volume: ${vol}"
+                      docker volume rm "${vol}" 2>/dev/null || true
+                  fi
+              done
+              log "Stale Jellyfin volumes removed"
+          else
+              log "No stale Jellyfin volumes found"
           fi
           
           # ============================================================
@@ -489,12 +502,30 @@ jobs:
             # Stop existing containers to apply any config changes (new volume paths, etc.)
             log "Stopping any existing containers..."
             docker compose down --remove-orphans 2>/dev/null || true
+            
             # ============================================================
-            # Safety: remove any leftover root-based jellyfin config binds
+            # Safety: detect and remove any named volumes used for /config
+            # Docker prefers existing named volumes over new bind mounts, 
+            # so we must explicitly remove them to fix the mount path.
+            # Check if jellyfin container was using a volume (not bind) mount.
             # ============================================================
-            if docker inspect jellyfin 2>/dev/null | grep -q "/config"; then
-                log "Forcing removal of old root-bind volume for Jellyfin"
-                docker compose down --volumes --remove-orphans || true
+            MOUNT_TYPE=$(docker inspect jellyfin --format='{{range .Mounts}}{{if eq .Destination "/config"}}{{.Type}}{{end}}{{end}}' 2>/dev/null || echo "")
+            if [ "${MOUNT_TYPE}" = "volume" ]; then
+                log "Detected jellyfin using named volume for /config instead of bind mount"
+                log "Removing all project volumes to force bind mount usage..."
+                docker compose down --volumes --remove-orphans 2>/dev/null || true
+            fi
+
+            # Final cleanup: remove any remaining jellyfin-related volumes
+            # that may have been created with various project name prefixes
+            REMAINING_VOLS=$(docker volume ls --quiet --filter "name=jellyfin" 2>/dev/null || true)
+            if [ -n "${REMAINING_VOLS}" ]; then
+                log "Cleaning up remaining jellyfin volumes: ${REMAINING_VOLS}"
+                echo "${REMAINING_VOLS}" | while IFS= read -r vol; do
+                    if [ -n "${vol}" ]; then
+                        docker volume rm "${vol}" 2>/dev/null || true
+                    fi
+                done
             fi
 
             # Start services and wait for health checks
