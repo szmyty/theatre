@@ -202,9 +202,12 @@ The workflow will:
 - Initialize gocryptfs encryption (only if not initialized)
 - Mount the decrypted view at `/srv/library_clear`
 - Install and enable systemd services for gocryptfs and DuckDNS
+- **Write `.env` file with `DOMAIN_NAME`, `DUCKDNS_TOKEN`, and `JELLYFIN_URL` for Caddy and Jellyfin**
 - Start Jellyfin and Caddy containers
 - Obtain HTTPS certificates via Let's Encrypt
 - Verify all components and print a deployment summary
+
+**Note:** The `.env` file at `/opt/theatre/repo/.env` is automatically generated during deployment from GitHub secrets and variables. This file provides Caddy with the DuckDNS token required for automatic HTTPS certificate provisioning.
 
 After successful deployment, access your theatre at:
 ```
