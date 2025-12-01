@@ -54,7 +54,7 @@ The Theatre project is built around a layered architecture designed for security
 │                               │ Transparent encryption           │
 │                               ▼                                  │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │      Encrypted Storage (/mnt/disks/data/.library_encrypted)│  │
+│  │      Encrypted Storage (/mnt/disks/media/.library_encrypted)│  │
 │  │             (AES-256-GCM encrypted files)                  │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │                                                                  │
@@ -252,7 +252,7 @@ If you prefer to deploy manually or to a different cloud provider:
 
 4. **Initialize gocryptfs** (first time only):
    ```bash
-   sudo gocryptfs --init /srv/library_encrypted
+   sudo gocryptfs --init /mnt/disks/media/.library_encrypted
    ```
 
 5. **Create the password file**:
@@ -288,7 +288,7 @@ The Theatre project uses gocryptfs for transparent encryption of all media files
 
 ### How It Works
 
-1. **Encrypted Storage**: All media files are stored encrypted in `/mnt/disks/data/.library_encrypted` (VM) or `media/encrypted` (local)
+1. **Encrypted Storage**: All media files are stored encrypted in `/mnt/disks/media/.library_encrypted` (VM) or `media/encrypted` (local)
 2. **Decrypted Mount**: gocryptfs mounts the encrypted directory to `/srv/library_clear` (VM) or `media/decrypted` (local)
 3. **Transparent Access**: Files are decrypted on-the-fly when read and encrypted when written
 4. **Jellyfin Access**: Jellyfin reads media from the decrypted mount point
@@ -297,20 +297,20 @@ The Theatre project uses gocryptfs for transparent encryption of all media files
 
 1. **Create directories**:
    ```bash
-   sudo mkdir -p /mnt/disks/data/.library_encrypted
+   sudo mkdir -p /mnt/disks/media/.library_encrypted
    sudo mkdir -p /srv/library_clear
    ```
 
 2. **Initialize gocryptfs**:
    ```bash
-   gocryptfs --init /mnt/disks/data/.library_encrypted
+   gocryptfs --init /mnt/disks/media/.library_encrypted
    ```
    
    You'll be prompted to create a password. **Store this password securely** — it's required to mount the encrypted filesystem.
 
 3. **Mount the encrypted filesystem**:
    ```bash
-   gocryptfs /mnt/disks/data/.library_encrypted /srv/library_clear
+   gocryptfs /mnt/disks/media/.library_encrypted /srv/library_clear
    ```
 
 ### Automatic Mounting with Systemd
@@ -331,7 +331,7 @@ For production deployments, use the systemd service for automatic mounting:
 
 3. **Create the environment file** at `/etc/gocryptfs/gocryptfs.env`:
    ```bash
-   GOCRYPTFS_ENCRYPTED_DIR=/mnt/disks/data/.library_encrypted
+   GOCRYPTFS_ENCRYPTED_DIR=/mnt/disks/media/.library_encrypted
    GOCRYPTFS_MOUNT_POINT=/srv/library_clear
    GOCRYPTFS_PASSFILE=/etc/gocryptfs/password
    ```
