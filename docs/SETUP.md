@@ -10,7 +10,7 @@ The Theatre project uses gocryptfs to provide transparent encryption for media f
 
 | Path | Purpose |
 |------|---------|
-| `/mnt/disks/data/.library_encrypted` | Encrypted backing directory (contains encrypted files) |
+| `/mnt/disks/media/.library_encrypted` | Encrypted backing directory (contains encrypted files) |
 | `/srv/library_clear` | Decrypted mount point (where Jellyfin reads media) |
 
 ### First-Time Setup
@@ -21,7 +21,7 @@ Before using the encrypted storage, you must initialize gocryptfs. This only nee
 
 ```bash
 # Create the encrypted backing directory
-sudo mkdir -p /mnt/disks/data/.library_encrypted
+sudo mkdir -p /mnt/disks/media/.library_encrypted
 
 # Create the decrypted mount point
 sudo mkdir -p /srv/library_clear
@@ -32,7 +32,7 @@ sudo mkdir -p /srv/library_clear
 Run the following command to initialize the encrypted filesystem:
 
 ```bash
-gocryptfs --init /mnt/disks/data/.library_encrypted
+gocryptfs --init /mnt/disks/media/.library_encrypted
 ```
 
 You will be prompted to create a password. **Store this password securely** — it is required to mount the encrypted filesystem.
@@ -46,12 +46,12 @@ This command creates the necessary configuration files inside the encrypted back
 After initialization, mount the encrypted filesystem to access your media:
 
 ```bash
-gocryptfs /mnt/disks/data/.library_encrypted /srv/library_clear
+gocryptfs /mnt/disks/media/.library_encrypted /srv/library_clear
 ```
 
 You will be prompted for the password you created during initialization.
 
-Once mounted, files placed in `/srv/library_clear` will be transparently encrypted and stored in `/mnt/disks/data/.library_encrypted`.
+Once mounted, files placed in `/srv/library_clear` will be transparently encrypted and stored in `/mnt/disks/media/.library_encrypted`.
 
 ### Unmounting
 
@@ -66,7 +66,7 @@ fusermount -u /srv/library_clear
 - **Do not automate mounting** — The mount process requires manual password entry for security.
 - **Backup your password** — Without the password, encrypted data cannot be recovered.
 - **Backup gocryptfs.conf** — This file contains the encrypted master key and filesystem settings. Keep a secure backup.
-- Files written to `/srv/library_clear` appear encrypted in `/mnt/disks/data/.library_encrypted`.
+- Files written to `/srv/library_clear` appear encrypted in `/mnt/disks/media/.library_encrypted`.
 - Jellyfin accesses media through the decrypted mount at `/srv/library_clear`.
 
 ### Verifying the Mount

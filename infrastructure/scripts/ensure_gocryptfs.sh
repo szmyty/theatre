@@ -193,8 +193,6 @@ install_systemd_service() {
     fi
 
     cp "${service_source}" "${service_dest}"
-    # Update paths in service file
-    sed -i "s|/srv/library_encrypted|${ENCRYPTED_DIR}|g" "${service_dest}"
     chmod 644 "${service_dest}"
 
     systemctl daemon-reload

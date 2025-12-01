@@ -51,7 +51,7 @@ Add the following content to `/etc/gocryptfs/gocryptfs.env`:
 
 ```bash
 # Path to the encrypted backing directory
-GOCRYPTFS_ENCRYPTED_DIR=/mnt/disks/data/.library_encrypted
+GOCRYPTFS_ENCRYPTED_DIR=/mnt/disks/media/.library_encrypted
 
 # Path to the decrypted mount point
 GOCRYPTFS_MOUNT_POINT=/srv/library_clear

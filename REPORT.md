@@ -304,19 +304,19 @@ services:
 
 #### 3.3 Inconsistent Path References
 **Priority:** 🟢 Low  
-**Location:** Various files
+**Location:** Various files  
+**Status:** ✅ Fixed
 
-**Finding:** Some files reference `/srv/library_encrypted` while others use `/mnt/disks/data/.library_encrypted`. The documentation and bootstrap script have inconsistencies.
+**Finding:** Previously, some files referenced `/srv/library_encrypted` while others used `/mnt/disks/data/.library_encrypted`. This has been standardized.
 
 | File | Path Used |
 |------|-----------|
-| bootstrap.sh | `/srv/library_encrypted` |
-| cloud-init.yaml | N/A (relies on bootstrap) |
+| bootstrap.sh | `/mnt/disks/media/.library_encrypted` |
+| common.sh | `/mnt/disks/media/.library_encrypted` (via MOUNT_POINT) |
 | deploy_full_stack.yml | `/mnt/disks/media/.library_encrypted` |
+| Documentation | `/mnt/disks/media/.library_encrypted` |
 
-**Recommendation:** Standardize on one path convention and use environment variables throughout.
-
-**Suggested Issue Title:** `Standardize encrypted directory path across all configurations`
+**Resolution:** All scripts and documentation now consistently use `/mnt/disks/media/.library_encrypted` as the canonical encrypted directory path.
 
 ---
 
@@ -608,7 +608,7 @@ README.md
 20. `Add monitoring and alerting for critical system metrics`
 
 ### Low Priority
-21. `Standardize encrypted directory path across all configurations`
+21. ~~`Standardize encrypted directory path across all configurations`~~ (Fixed)
 22. `Standardize environment variable naming conventions`
 23. `Add CONTRIBUTING.md with development guidelines`
 24. `Add .editorconfig for consistent code formatting`

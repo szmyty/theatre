@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # Configuration
-ENCRYPTED_DIR="/srv/library_encrypted"
+ENCRYPTED_DIR="/mnt/disks/media/.library_encrypted"
 MOUNT_POINT="/srv/library_clear"
 GOCRYPTFS_ENV_DIR="/etc/gocryptfs"
 GOCRYPTFS_ENV_FILE="${GOCRYPTFS_ENV_DIR}/gocryptfs.env"
