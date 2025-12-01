@@ -135,6 +135,31 @@ enable_systemd_service() {
     log "Systemd service enabled successfully"
 }
 
+# Cleanup stale Jellyfin volumes
+cleanup_jellyfin_volumes() {
+    log "Checking for stale Jellyfin config volumes..."
+    
+    # Docker Compose creates implicit volumes with project-name prefixes
+    # (e.g., repo_jellyfin_config, theatre_jellyfin_config) which take
+    # precedence over updated bind mounts if not explicitly removed.
+    local stale_volumes
+    stale_volumes=$(docker volume ls --quiet --filter "name=jellyfin" 2>/dev/null || true)
+    
+    if [[ -n "${stale_volumes}" ]]; then
+        log "Found stale Jellyfin volumes, removing..."
+        # Use while loop to properly handle volume names with special characters
+        while IFS= read -r vol; do
+            if [[ -n "${vol}" ]]; then
+                log "Removing volume: ${vol}"
+                docker volume rm "${vol}" 2>/dev/null || true
+            fi
+        done <<< "${stale_volumes}"
+        log "Stale volumes removed"
+    else
+        log "No stale Jellyfin volumes found"
+    fi
+}
+
 # Start docker-compose
 start_docker_compose() {
     log "Starting docker-compose..."
@@ -145,6 +170,21 @@ start_docker_compose() {
         log "ERROR: docker-compose.yml not found in ${PROJECT_ROOT}"
         exit 1
     fi
+    
+    # Stop any existing containers before restarting
+    log "Stopping existing containers..."
+    docker compose down --remove-orphans 2>/dev/null || true
+    
+    # Check if jellyfin container was using a named volume instead of bind mount
+    local mount_type
+    mount_type=$(docker inspect jellyfin --format='{{range .Mounts}}{{if eq .Destination "/config"}}{{.Type}}{{end}}{{end}}' 2>/dev/null || echo "")
+    if [[ "${mount_type}" == "volume" ]]; then
+        log "Detected jellyfin using named volume for /config, forcing volume removal..."
+        docker compose down --volumes --remove-orphans 2>/dev/null || true
+    fi
+    
+    # Cleanup any remaining jellyfin volumes
+    cleanup_jellyfin_volumes
     
     docker compose up --detach
     
