@@ -66,6 +66,16 @@ check_media_disk() {
     return 0
 }
 
+# Install rsync if not available
+install_rsync() {
+    if ! command -v rsync &>/dev/null; then
+        log "Installing rsync..."
+        apt-get update --quiet
+        apt-get install --yes rsync
+        log_success "rsync installed"
+    fi
+}
+
 # Stop Docker and containerd
 stop_services() {
     log "Stopping Docker and containerd..."
@@ -147,12 +157,13 @@ EOF
     sed -i "s|root = \"/var/lib/containerd\"|root = \"${CONTAINERD_DATA_ROOT}\"|g" /etc/containerd/config.toml
     chmod 644 /etc/containerd/config.toml
 
-    start_services
-
-    # Remove old directories to free space
+    # Remove old directories BEFORE starting services
+    # This is critical - containerd refuses to use a new root if the old directory still exists
     log "Removing old directories from root disk..."
     rm -rf /var/lib/docker
     rm -rf /var/lib/containerd
+
+    start_services
 
     log_success "Docker and containerd migration completed"
 }
@@ -194,6 +205,7 @@ main() {
         exit 0
     fi
 
+    install_rsync
     migrate_docker_root
     verify_data_roots
 
