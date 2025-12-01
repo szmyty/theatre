@@ -354,7 +354,7 @@ jobs:
 
             # Wait for Docker to be ready
             log "Waiting for Docker to be ready..."
-            for i in {1..30}; do
+            for _ in {1..30}; do
               if docker info &>/dev/null; then
                 break
               fi
@@ -387,7 +387,7 @@ jobs:
           fi
 
           log "Verifying containerd root..."
-          CONTAINERD_ROOT_AFTER=$(containerd config dump 2>/dev/null | grep -E '^root\s*=' | head -1 | awk -F'"' '{print $2}' || echo "UNKNOWN")
+          CONTAINERD_ROOT_AFTER=$(grep -E '^\s*root\s*=' /etc/containerd/config.toml 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || echo "UNKNOWN")
           if [ "${CONTAINERD_ROOT_AFTER}" = "${CONTAINERD_DATA_ROOT}" ]; then
             log "SUCCESS: containerd is using correct root: ${CONTAINERD_ROOT_AFTER}"
           else
@@ -797,7 +797,7 @@ jobs:
           CONTAINERD_ROOT=$(gcloud compute ssh "${VM_NAME}" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --zone="${{ secrets.GCP_ZONE }}" \
-            --command='containerd config dump 2>/dev/null | grep -E "^root\s*=" | head -1 | awk -F"\"" "{print \$2}"' \
+            --command='grep -E "^\s*root\s*=" /etc/containerd/config.toml | head -1 | sed -E "s/.*\"([^\"]+)\".*/\1/"' \
             --quiet)
           echo "containerd root: ${CONTAINERD_ROOT}"
           if [ "${CONTAINERD_ROOT}" = "/mnt/disks/media/containerd" ]; then

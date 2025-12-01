@@ -157,7 +157,7 @@ verify_docker_data_root() {
     
     log "Verifying containerd root..."
     local containerd_root_after
-    containerd_root_after=$(containerd config dump 2>/dev/null | grep -E '^root\s*=' | head -1 | awk -F'"' '{print $2}' || echo "UNKNOWN")
+    containerd_root_after=$(grep -E '^\s*root\s*=' /etc/containerd/config.toml 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || echo "UNKNOWN")
     
     if [[ "${containerd_root_after}" == "${CONTAINERD_DATA_ROOT}" ]]; then
         log "SUCCESS: containerd is using correct root: ${containerd_root_after}"
