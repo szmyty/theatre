@@ -140,12 +140,16 @@ migrate_docker_root() {
     # Sync existing data
     log "Syncing Docker data to media disk..."
     if [[ -d /var/lib/docker ]]; then
-        rsync -aP /var/lib/docker/ "${DOCKER_DATA_ROOT}/" || true
+        if ! rsync -aP /var/lib/docker/ "${DOCKER_DATA_ROOT}/"; then
+            log_warn "rsync of Docker data may have partially failed, continuing..."
+        fi
     fi
 
     log "Syncing containerd data to media disk..."
     if [[ -d /var/lib/containerd ]]; then
-        rsync -aP /var/lib/containerd/ "${CONTAINERD_DATA_ROOT}/" || true
+        if ! rsync -aP /var/lib/containerd/ "${CONTAINERD_DATA_ROOT}/"; then
+            log_warn "rsync of containerd data may have partially failed, continuing..."
+        fi
     fi
 
     # Configure Docker daemon.json
