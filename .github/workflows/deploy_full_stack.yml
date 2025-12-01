@@ -74,9 +74,23 @@ jobs:
 
       - name: Upload provisioning scripts
         run: |
-          gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command="sudo mkdir -p ${SCRIPTS_DIR}" --quiet
-          gcloud compute scp infrastructure/scripts/*.sh "${VM_NAME}:${SCRIPTS_DIR}/" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --quiet
-          gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command="sudo chmod +x ${SCRIPTS_DIR}/*.sh" --quiet
+          UPLOAD_DIR="/tmp/theatre-scripts-$$"
+          # Step 1: Create a unique temp directory and upload scripts there
+          gcloud compute ssh "${VM_NAME}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --command="mkdir -p ${UPLOAD_DIR}" \
+            --quiet
+          gcloud compute scp infrastructure/scripts/*.sh "${VM_NAME}:${UPLOAD_DIR}/" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --quiet
+          # Step 2: Move scripts to /opt/theatre/scripts using sudo and set permissions
+          gcloud compute ssh "${VM_NAME}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --command="sudo mkdir -p ${SCRIPTS_DIR} && sudo mv ${UPLOAD_DIR}/*.sh ${SCRIPTS_DIR}/ && sudo chmod +x ${SCRIPTS_DIR}/*.sh && sudo chown root:root ${SCRIPTS_DIR}/*.sh && rm -rf ${UPLOAD_DIR}" \
+            --quiet
 
       - name: Upload secrets and run provisioning
         run: |
