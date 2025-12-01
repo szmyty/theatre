@@ -1,6 +1,6 @@
-# Jellyfin config data (persisted locally, not committed)
-config/jellyfin/*
-!config/jellyfin/.gitkeep
+# Jellyfin config data (stored on media disk at /mnt/disks/media/jellyfin_config, never in repo)
+# This directory must NEVER exist in source control - it causes Docker to use wrong bind mount
+config/jellyfin/
 
 # Decrypted media files (mounted via gocryptfs, never committed)
 media/decrypted/*
