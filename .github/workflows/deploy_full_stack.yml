@@ -469,16 +469,15 @@ jobs:
           # ============================================================
           # Create .env file for docker-compose
           # ============================================================
-          log "Setting up docker-compose environment..."
-          cd "${REPO_DIR}"
-          if [ -n "${DOMAIN_NAME:-}" ]; then
-            cat > .env << DOTENVEOF
+          log "Writing .env file for docker-compose..."
+          ENV_PATH="${REPO_DIR}/.env"
+          cat > "${ENV_PATH}" << DOTENVEOF
           DOMAIN_NAME=${DOMAIN_NAME}
-          DUCKDNS_TOKEN=${DUCKDNS_TOKEN:-}
+          DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
           JELLYFIN_URL=https://${DOMAIN_NAME}
           DOTENVEOF
-            log ".env file created"
-          fi
+          chmod 600 "${ENV_PATH}"
+          log ".env file written to ${ENV_PATH}"
 
           # ============================================================
           # Run docker-compose to start all services (Jellyfin + Caddy)
@@ -608,6 +607,26 @@ jobs:
           echo "caddy_status=${RESULT}" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
 
+      - name: Verify .env file contains required variables
+        id: verify_env
+        run: |
+          echo "::group::Verifying .env file"
+          gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='cat /opt/theatre/repo/.env' \
+            --quiet
+          
+          # Check if DUCKDNS_TOKEN and DOMAIN_NAME are present and non-empty
+          ENV_CHECK=$(gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command='grep -Eq "DUCKDNS_TOKEN=.+" /opt/theatre/repo/.env && grep -Eq "DOMAIN_NAME=.+" /opt/theatre/repo/.env && echo "VALID" || echo "INVALID"' \
+            --quiet)
+          echo "Environment file status: ${ENV_CHECK}"
+          echo "env_status=${ENV_CHECK}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
       - name: Verify HTTP probe (Caddy redirect)
         id: verify_http
         if: vars.DOMAIN_NAME != ''
@@ -675,6 +694,9 @@ jobs:
           echo "  - Docker: ${{ steps.verify_docker.outputs.docker_status }}"
           echo "  - Jellyfin Container: ${{ steps.verify_jellyfin.outputs.jellyfin_status }}"
           echo "  - Caddy Container: ${{ steps.verify_caddy.outputs.caddy_status }}"
+          echo ""
+          echo "Environment Status:"
+          echo "  - .env File: ${{ steps.verify_env.outputs.env_status || 'SKIPPED' }}"
           echo ""
           echo "HTTPS Status:"
           echo "  - HTTP Probe: ${{ steps.verify_http.outputs.http_status || 'SKIPPED' }}"
