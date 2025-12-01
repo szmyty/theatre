@@ -611,18 +611,21 @@ jobs:
         id: verify_env
         run: |
           echo "::group::Verifying .env file"
+      
+          # Print the .env file (requires sudo because it's chmod 600)
           gcloud compute ssh "${VM_NAME}" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --zone="${{ secrets.GCP_ZONE }}" \
-            --command='cat /opt/theatre/repo/.env' \
+            --command='sudo cat /opt/theatre/repo/.env' \
             --quiet
-          
-          # Check if DUCKDNS_TOKEN and DOMAIN_NAME are present and non-empty
+      
+          # Validate DUCKDNS_TOKEN and DOMAIN_NAME are present and non-empty
           ENV_CHECK=$(gcloud compute ssh "${VM_NAME}" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --zone="${{ secrets.GCP_ZONE }}" \
-            --command='grep -Eq "DUCKDNS_TOKEN=.+" /opt/theatre/repo/.env && grep -Eq "DOMAIN_NAME=.+" /opt/theatre/repo/.env && echo "VALID" || echo "INVALID"' \
+            --command='sudo grep -Eq "DUCKDNS_TOKEN=.+" /opt/theatre/repo/.env && sudo grep -Eq "DOMAIN_NAME=.+" /opt/theatre/repo/.env && echo "VALID" || echo "INVALID"' \
             --quiet)
+      
           echo "Environment file status: ${ENV_CHECK}"
           echo "env_status=${ENV_CHECK}" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
