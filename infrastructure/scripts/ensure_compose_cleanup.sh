@@ -74,24 +74,39 @@ prune_volumes() {
 }
 
 # Remove stale jellyfin volumes
+# Docker Compose creates implicit volumes with project-name prefixes
 remove_jellyfin_volumes() {
-    log "Checking for stale jellyfin volumes..."
+    log "Checking for stale jellyfin and theatre volumes..."
 
-    local stale_volumes
-    stale_volumes=$(docker volume ls --quiet --filter "name=jellyfin" 2>/dev/null || true)
+    # Patterns that may override our bind mounts
+    local patterns=(
+        "jellyfin"
+        "repo_jellyfin"
+        "repo_"
+        "theatre_jellyfin"
+        "theatre_"
+    )
+    
+    for pattern in "${patterns[@]}"; do
+        local stale_volumes
+        stale_volumes=$(docker volume ls --quiet --filter "name=${pattern}" 2>/dev/null || true)
 
-    if [[ -n "${stale_volumes}" ]]; then
-        log "Found stale jellyfin volumes, removing..."
-        while IFS= read -r vol; do
-            if [[ -n "${vol}" ]]; then
-                log "Removing volume: ${vol}"
-                docker volume rm "${vol}" 2>/dev/null || true
-            fi
-        done <<< "${stale_volumes}"
-        log_success "Stale jellyfin volumes removed"
-    else
-        log "No stale jellyfin volumes found"
-    fi
+        if [[ -n "${stale_volumes}" ]]; then
+            log "Found volumes matching '${pattern}', removing..."
+            while IFS= read -r vol; do
+                if [[ -n "${vol}" ]]; then
+                    # Skip caddy volumes as they are legitimate
+                    if [[ "${vol}" =~ ^caddy ]]; then
+                        continue
+                    fi
+                    log "Removing volume: ${vol}"
+                    docker volume rm "${vol}" 2>/dev/null || true
+                fi
+            done <<< "${stale_volumes}"
+        fi
+    done
+    
+    log_success "Stale volumes cleanup completed"
 }
 
 # Remove stale config/jellyfin directory from repo

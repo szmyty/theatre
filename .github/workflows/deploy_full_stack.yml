@@ -109,15 +109,44 @@ jobs:
             sudo chmod 600 /tmp/secrets.env
             set -a && source /tmp/secrets.env && set +a
             rm -f /tmp/secrets.env
+            
+            # 1. Ensure disk exists and is formatted
             sudo -E ${SCRIPTS_DIR}/ensure_disk.sh
+            
+            # 2. Ensure disk is mounted
             sudo -E ${SCRIPTS_DIR}/ensure_disk_mount.sh
+            
+            # 3. Install dependencies (rsync, curl, jq) BEFORE migration
+            sudo -E ${SCRIPTS_DIR}/install_dependencies.sh
+            
+            # 4. Install Docker if not present
             sudo -E ${SCRIPTS_DIR}/ensure_docker_installed.sh
+            
+            # 5. Migrate containerd to media disk (BEFORE Docker)
+            sudo -E ${SCRIPTS_DIR}/migrate_containerd_root.sh
+            
+            # 6. Migrate Docker to media disk
             sudo -E ${SCRIPTS_DIR}/migrate_docker_root.sh
+            
+            # 7. Setup gocryptfs
             sudo -E ${SCRIPTS_DIR}/ensure_gocryptfs.sh
+            
+            # 8. Clone/update repository
             sudo -E ${SCRIPTS_DIR}/ensure_repo_clone.sh
+            
+            # 9. Setup DuckDNS
             sudo -E ${SCRIPTS_DIR}/ensure_duckdns.sh
+            
+            # 10. Create .env file
             sudo -E ${SCRIPTS_DIR}/ensure_env_file.sh
+            
+            # 11. Clean stale Jellyfin paths and volumes
+            sudo -E ${SCRIPTS_DIR}/ensure_jellyfin_clean.sh
+            
+            # 12. Run additional compose cleanup
             sudo -E ${SCRIPTS_DIR}/ensure_compose_cleanup.sh
+            
+            # 13. Start docker-compose
             sudo -E ${SCRIPTS_DIR}/start_compose.sh
           "
         env:
@@ -130,6 +159,11 @@ jobs:
         id: verify
         run: |
           gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command="
+            # Run comprehensive verification (continue on warnings, fail on critical errors later)
+            # verify_all.sh may have warnings for expected conditions like gocryptfs not being mounted
+            sudo ${SCRIPTS_DIR}/verify_all.sh --skip-https || echo 'VERIFICATION_HAD_WARNINGS'
+            
+            # Run critical individual verification scripts (will fail the step if they fail)
             sudo ${SCRIPTS_DIR}/verify_mounts.sh
             sudo ${SCRIPTS_DIR}/verify_jellyfin_mount.sh
             sudo ${SCRIPTS_DIR}/verify_caddy.sh
@@ -138,6 +172,8 @@ jobs:
           echo "gocryptfs=$(gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command='mountpoint -q /srv/library_clear && echo MOUNTED || echo NOT_MOUNTED' --quiet)" >> "$GITHUB_OUTPUT"
           echo "jellyfin=$(gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command='docker inspect --format="{{.State.Status}}" jellyfin 2>/dev/null || echo NOT_RUNNING' --quiet)" >> "$GITHUB_OUTPUT"
           echo "caddy=$(gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command='docker inspect --format="{{.State.Status}}" caddy 2>/dev/null || echo NOT_RUNNING' --quiet)" >> "$GITHUB_OUTPUT"
+          echo "docker_root=$(gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command='docker info --format "{{.DockerRootDir}}" 2>/dev/null || echo UNKNOWN' --quiet)" >> "$GITHUB_OUTPUT"
+          echo "containerd_root=$(gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command='grep -E "^\s*root\s*=" /etc/containerd/config.toml 2>/dev/null | head -1 | sed -E "s/.*\"([^\"]+)\".*/\1/" || echo UNKNOWN' --quiet)" >> "$GITHUB_OUTPUT"
 
       - name: Verify HTTPS
         id: https
@@ -157,8 +193,19 @@ jobs:
           echo "                 DEPLOYMENT SUMMARY"
           echo "============================================================"
           echo "VM: ${VM_NAME} (${{ steps.vm.outputs.ip }})"
-          echo "Mounts: media=${{ steps.verify.outputs.media }}, gocryptfs=${{ steps.verify.outputs.gocryptfs }}"
-          echo "Containers: jellyfin=${{ steps.verify.outputs.jellyfin }}, caddy=${{ steps.verify.outputs.caddy }}"
+          echo ""
+          echo "Data Roots:"
+          echo "  Docker: ${{ steps.verify.outputs.docker_root }}"
+          echo "  containerd: ${{ steps.verify.outputs.containerd_root }}"
+          echo ""
+          echo "Mounts:"
+          echo "  media: ${{ steps.verify.outputs.media }}"
+          echo "  gocryptfs: ${{ steps.verify.outputs.gocryptfs }}"
+          echo ""
+          echo "Containers:"
+          echo "  jellyfin: ${{ steps.verify.outputs.jellyfin }}"
+          echo "  caddy: ${{ steps.verify.outputs.caddy }}"
+          echo ""
           echo "HTTPS: ${{ steps.https.outputs.status || 'SKIPPED' }}"
           echo "============================================================"
           [ -n "${{ vars.DOMAIN_NAME }}" ] && echo "🎬 Visit: https://${{ vars.DOMAIN_NAME }}" || echo "🎬 Visit: http://${{ steps.vm.outputs.ip }}:8096"
