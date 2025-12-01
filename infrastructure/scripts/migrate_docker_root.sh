@@ -70,8 +70,18 @@ check_media_disk() {
 install_rsync() {
     if ! command -v rsync &>/dev/null; then
         log "Installing rsync..."
-        apt-get update --quiet
-        apt-get install --yes rsync
+        if ! apt-get update --quiet; then
+            log_error "Failed to update apt package list"
+            exit 1
+        fi
+        if ! apt-get install --yes rsync; then
+            log_error "Failed to install rsync"
+            exit 1
+        fi
+        if ! command -v rsync &>/dev/null; then
+            log_error "rsync installation verification failed"
+            exit 1
+        fi
         log_success "rsync installed"
     fi
 }
@@ -156,6 +166,17 @@ EOF
     fi
     sed -i "s|root = \"/var/lib/containerd\"|root = \"${CONTAINERD_DATA_ROOT}\"|g" /etc/containerd/config.toml
     chmod 644 /etc/containerd/config.toml
+
+    # Verify new directories exist before removing old ones
+    log "Verifying new directories exist before removing old ones..."
+    if [[ ! -d "${DOCKER_DATA_ROOT}" ]]; then
+        log_error "Docker data root does not exist: ${DOCKER_DATA_ROOT}"
+        exit 1
+    fi
+    if [[ ! -d "${CONTAINERD_DATA_ROOT}" ]]; then
+        log_error "containerd data root does not exist: ${CONTAINERD_DATA_ROOT}"
+        exit 1
+    fi
 
     # Remove old directories BEFORE starting services
     # This is critical - containerd refuses to use a new root if the old directory still exists
