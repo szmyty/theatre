@@ -66,6 +66,26 @@ check_media_disk() {
     return 0
 }
 
+# Install rsync if not available
+install_rsync() {
+    if ! command -v rsync &>/dev/null; then
+        log "Installing rsync..."
+        if ! apt-get update --quiet; then
+            log_error "Failed to update apt package list"
+            exit 1
+        fi
+        if ! apt-get install --yes rsync; then
+            log_error "Failed to install rsync"
+            exit 1
+        fi
+        if ! command -v rsync &>/dev/null; then
+            log_error "rsync installation verification failed"
+            exit 1
+        fi
+        log_success "rsync installed"
+    fi
+}
+
 # Stop Docker and containerd
 stop_services() {
     log "Stopping Docker and containerd..."
@@ -120,12 +140,16 @@ migrate_docker_root() {
     # Sync existing data
     log "Syncing Docker data to media disk..."
     if [[ -d /var/lib/docker ]]; then
-        rsync -aP /var/lib/docker/ "${DOCKER_DATA_ROOT}/" || true
+        if ! rsync -aP /var/lib/docker/ "${DOCKER_DATA_ROOT}/"; then
+            log_warn "rsync of Docker data may have partially failed, continuing..."
+        fi
     fi
 
     log "Syncing containerd data to media disk..."
     if [[ -d /var/lib/containerd ]]; then
-        rsync -aP /var/lib/containerd/ "${CONTAINERD_DATA_ROOT}/" || true
+        if ! rsync -aP /var/lib/containerd/ "${CONTAINERD_DATA_ROOT}/"; then
+            log_warn "rsync of containerd data may have partially failed, continuing..."
+        fi
     fi
 
     # Configure Docker daemon.json
@@ -147,12 +171,24 @@ EOF
     sed -i "s|root = \"/var/lib/containerd\"|root = \"${CONTAINERD_DATA_ROOT}\"|g" /etc/containerd/config.toml
     chmod 644 /etc/containerd/config.toml
 
-    start_services
+    # Verify new directories exist before removing old ones
+    log "Verifying new directories exist before removing old ones..."
+    if [[ ! -d "${DOCKER_DATA_ROOT}" ]]; then
+        log_error "Docker data root does not exist: ${DOCKER_DATA_ROOT}"
+        exit 1
+    fi
+    if [[ ! -d "${CONTAINERD_DATA_ROOT}" ]]; then
+        log_error "containerd data root does not exist: ${CONTAINERD_DATA_ROOT}"
+        exit 1
+    fi
 
-    # Remove old directories to free space
+    # Remove old directories BEFORE starting services
+    # This is critical - containerd refuses to use a new root if the old directory still exists
     log "Removing old directories from root disk..."
     rm -rf /var/lib/docker
     rm -rf /var/lib/containerd
+
+    start_services
 
     log_success "Docker and containerd migration completed"
 }
@@ -194,6 +230,7 @@ main() {
         exit 0
     fi
 
+    install_rsync
     migrate_docker_root
     verify_data_roots
 
