@@ -231,8 +231,9 @@ verify_no_stale_volumes() {
         return
     fi
     
+    # Check for jellyfin-related volumes that might override bind mounts
     local stale_volumes
-    stale_volumes=$(docker volume ls --quiet --filter "name=jellyfin" 2>/dev/null | grep -v '^caddy' || true)
+    stale_volumes=$(docker volume ls --quiet --filter "name=jellyfin" 2>/dev/null || true)
     
     if [[ -n "${stale_volumes}" ]]; then
         add_warning "Found potentially stale jellyfin volumes:"

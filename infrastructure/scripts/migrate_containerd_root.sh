@@ -209,6 +209,13 @@ EOF
         exit 1
     fi
     
+    # Verify containerd service is actually stopped before removing directory
+    log "Verifying containerd is stopped before removing old directory..."
+    if systemctl is-active --quiet containerd 2>/dev/null; then
+        log_error "containerd is still running, cannot safely remove old directory"
+        exit 1
+    fi
+    
     # CRITICAL: Remove old directory BEFORE starting containerd
     # containerd will refuse to use a new root if the old directory still exists
     log "Removing old containerd directory from root disk..."

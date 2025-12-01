@@ -159,10 +159,11 @@ jobs:
         id: verify
         run: |
           gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command="
-            # Run comprehensive verification
-            sudo ${SCRIPTS_DIR}/verify_all.sh --skip-https || true
+            # Run comprehensive verification (continue on warnings, fail on critical errors later)
+            # verify_all.sh may have warnings for expected conditions like gocryptfs not being mounted
+            sudo ${SCRIPTS_DIR}/verify_all.sh --skip-https || echo 'VERIFICATION_HAD_WARNINGS'
             
-            # Run individual verification scripts
+            # Run critical individual verification scripts (will fail the step if they fail)
             sudo ${SCRIPTS_DIR}/verify_mounts.sh
             sudo ${SCRIPTS_DIR}/verify_jellyfin_mount.sh
             sudo ${SCRIPTS_DIR}/verify_caddy.sh

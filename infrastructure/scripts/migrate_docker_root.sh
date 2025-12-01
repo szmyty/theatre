@@ -194,6 +194,13 @@ migrate_docker_root() {
         if [[ -d /var/lib/docker ]] || [[ -d /var/lib/containerd ]]; then
             log_warn "Migration was partially complete - cleaning up old directories..."
             stop_services
+            
+            # Verify services are actually stopped before removing directories
+            if systemctl is-active --quiet docker 2>/dev/null || systemctl is-active --quiet containerd 2>/dev/null; then
+                log_error "Services failed to stop, aborting directory cleanup"
+                exit 1
+            fi
+            
             rm -rf /var/lib/docker
             rm -rf /var/lib/containerd
             start_services
@@ -259,6 +266,13 @@ EOF
     fi
     if [[ ! -d "${CONTAINERD_DATA_ROOT}" ]]; then
         log_error "containerd data root does not exist: ${CONTAINERD_DATA_ROOT}"
+        exit 1
+    fi
+
+    # Verify services are actually stopped before removing directories
+    log "Verifying services are stopped before removing old directories..."
+    if systemctl is-active --quiet docker 2>/dev/null || systemctl is-active --quiet containerd 2>/dev/null; then
+        log_error "Services are still running, cannot safely remove old directories"
         exit 1
     fi
 

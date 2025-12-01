@@ -194,10 +194,12 @@ run_compose() {
     
     # Start services
     log "Starting services with docker compose up..."
+    # Try with --wait flag for health checks (requires Docker Compose v2.1+)
+    # If not supported or health checks fail, fall back to basic detached mode
     if docker compose up --detach --wait 2>/dev/null; then
         log_success "Docker services started and healthy"
     else
-        # Fallback: start without health check wait
+        # Fallback: start without health check wait (for older Docker Compose versions)
         log "Starting services without health check wait..."
         docker compose up --detach
         log_success "Docker services started (health checks may still be pending)"
