@@ -7,6 +7,8 @@ Wants=local-fs.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+TimeoutStartSec=60
+TimeoutStopSec=30
 EnvironmentFile=/etc/gocryptfs/gocryptfs.env
 ExecStartPre=/bin/test -d ${GOCRYPTFS_ENCRYPTED_DIR}
 ExecStartPre=/bin/test -f ${GOCRYPTFS_PASSFILE}
