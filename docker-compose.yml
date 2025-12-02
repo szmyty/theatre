@@ -13,6 +13,12 @@ services:
         required: false
     environment:
       - JELLYFIN_PublishedServerUrl=${JELLYFIN_URL:-http://localhost:8096}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8096/System/Info/Public"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   caddy:
     build:
@@ -21,7 +27,8 @@ services:
     container_name: caddy
     restart: unless-stopped
     depends_on:
-      - jellyfin
+      jellyfin:
+        condition: service_healthy
     ports:
       - "80:80"       # HTTP (redirects to HTTPS)
       - "443:443"     # HTTPS
@@ -33,6 +40,12 @@ services:
     environment:
       - DOMAIN_NAME=${DOMAIN_NAME:-movietheatre.duckdns.org}
       - DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
   caddy_data:
