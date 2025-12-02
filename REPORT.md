@@ -322,15 +322,18 @@ services:
 
 #### 3.4 Environment Variable Names Inconsistent
 **Priority:** 🟢 Low  
-**Location:** Various files
+**Location:** Various files  
+**Status:** ✅ Fixed
 
 **Finding:** Some environment variables use different names for the same purpose:
 - `passfile` vs `password` for gocryptfs password file
 - `GOCRYPTFS_PASSWORD` (secret) vs `GOCRYPTFS_PASSFILE` (file path)
 
-**Recommendation:** Standardize naming convention in documentation and code.
-
-**Suggested Issue Title:** `Standardize environment variable naming conventions`
+**Resolution:** 
+- Created `docs/ENVIRONMENT-VARIABLES.md` with naming convention rules
+- Standardized on `/etc/gocryptfs/passfile` as the password file path (not `password`)
+- Updated README.md and docs/GOCRYPTFS-SERVICE.md to use consistent naming
+- Clarified the distinction: `_PASSWORD` suffix is for secret values, `_PASSFILE` suffix is for file paths
 
 ---
 
@@ -563,8 +566,8 @@ README.md
 | 2.6 | Reliability | Missing Docker network | 🟡 Medium |
 | 3.1 | Maintainability | Docker install duplicated | 🟡 Medium |
 | 3.2 | Maintainability | gocryptfs setup duplicated | 🟡 Medium |
-| 3.3 | Maintainability | Inconsistent paths | 🟢 Low |
-| 3.4 | Maintainability | Inconsistent env var names | 🟢 Low |
+| 3.3 | Maintainability | Inconsistent paths | 🟢 Low ✅ |
+| 3.4 | Maintainability | Inconsistent env var names | 🟢 Low ✅ |
 | 4.1 | Documentation | Missing CONTRIBUTING.md | 🟢 Low |
 | 4.2 | Documentation | Missing SECURITY.md | 🔴 High |
 | 4.3 | Documentation | Missing .editorconfig | 🟢 Low |
@@ -609,7 +612,7 @@ README.md
 
 ### Low Priority
 21. ~~`Standardize encrypted directory path across all configurations`~~ (Fixed)
-22. `Standardize environment variable naming conventions`
+22. ~~`Standardize environment variable naming conventions`~~ (Fixed - see docs/ENVIRONMENT-VARIABLES.md)
 23. `Add CONTRIBUTING.md with development guidelines`
 24. `Add .editorconfig for consistent code formatting`
 25. `Update SETUP.md to reflect automated mounting capabilities`
