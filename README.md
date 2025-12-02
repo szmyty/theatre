@@ -98,10 +98,13 @@ theatre/
 ├── docs/
 │   ├── SETUP.md              # Detailed encrypted storage setup guide
 │   ├── GOCRYPTFS-SERVICE.md  # Systemd service configuration
-│   └── DUCKDNS.md            # Dynamic DNS setup guide
+│   ├── DUCKDNS.md            # Dynamic DNS setup guide
+│   ├── DEPLOY-SCRIPTS.md     # Deployment scripts documentation
+│   └── ENVIRONMENT-VARIABLES.md  # Environment variable naming conventions
 ├── infrastructure/
 │   ├── bootstrap.sh          # VM bootstrap script
 │   ├── cloud-init.yaml       # Cloud-init configuration for automated provisioning
+│   ├── scripts/              # Modular provisioning scripts
 │   └── systemd/
 │       ├── gocryptfs-mount.service  # Auto-mount encrypted storage on boot
 │       ├── duckdns-update.service   # DuckDNS update service
@@ -325,15 +328,15 @@ For production deployments, use the systemd service for automatic mounting:
 2. **Create the password file**:
    ```bash
    sudo mkdir -p /etc/gocryptfs
-   echo 'your-password' | sudo tee /etc/gocryptfs/password > /dev/null
-   sudo chmod 600 /etc/gocryptfs/password
+   echo 'your-password' | sudo tee /etc/gocryptfs/passfile > /dev/null
+   sudo chmod 600 /etc/gocryptfs/passfile
    ```
 
 3. **Create the environment file** at `/etc/gocryptfs/gocryptfs.env`:
    ```bash
    GOCRYPTFS_ENCRYPTED_DIR=/mnt/disks/media/.library_encrypted
    GOCRYPTFS_MOUNT_POINT=/srv/library_clear
-   GOCRYPTFS_PASSFILE=/etc/gocryptfs/password
+   GOCRYPTFS_PASSFILE=/etc/gocryptfs/passfile
    ```
 
 4. **Install and enable the service**:
@@ -359,7 +362,7 @@ sudo systemctl stop gocryptfs-mount
 
 - **Backup your password**: Without the password, encrypted data cannot be recovered
 - **Backup gocryptfs.conf**: This file in the encrypted directory contains the encrypted master key
-- **Password file security**: Ensure `/etc/gocryptfs/password` has mode 600 and is owned by root
+- **Password file security**: Ensure `/etc/gocryptfs/passfile` has mode 600 and is owned by root
 
 For detailed setup instructions, see [docs/SETUP.md](docs/SETUP.md) and [docs/GOCRYPTFS-SERVICE.md](docs/GOCRYPTFS-SERVICE.md).
 

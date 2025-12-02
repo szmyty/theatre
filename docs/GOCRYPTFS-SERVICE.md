@@ -31,9 +31,9 @@ Create a secure password file that contains your gocryptfs password:
 
 ```bash
 sudo mkdir -p /etc/gocryptfs
-sudo touch /etc/gocryptfs/password
-sudo chmod 600 /etc/gocryptfs/password
-echo "your-gocryptfs-password" | sudo tee /etc/gocryptfs/password > /dev/null
+sudo touch /etc/gocryptfs/passfile
+sudo chmod 600 /etc/gocryptfs/passfile
+echo "your-gocryptfs-password" | sudo tee /etc/gocryptfs/passfile > /dev/null
 ```
 
 > **Security Note:** Ensure the password file has restricted permissions (600) and is owned by root.
@@ -57,7 +57,7 @@ GOCRYPTFS_ENCRYPTED_DIR=/mnt/disks/media/.library_encrypted
 GOCRYPTFS_MOUNT_POINT=/srv/library_clear
 
 # Path to the password file
-GOCRYPTFS_PASSFILE=/etc/gocryptfs/password
+GOCRYPTFS_PASSFILE=/etc/gocryptfs/passfile
 ```
 
 Adjust the paths to match your setup.
