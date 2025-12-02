@@ -71,6 +71,21 @@ pull_images() {
     log_success "Images pulled"
 }
 
+# Verify gocryptfs mount is ready before starting containers
+verify_gocryptfs_mount() {
+    log "Verifying gocryptfs mount is ready..."
+
+    if ! mountpoint -q "${MOUNT_CLEAR}"; then
+        log_error "gocryptfs is not mounted at ${MOUNT_CLEAR}"
+        log_error "Please ensure gocryptfs is mounted before starting Docker containers"
+        log_error "Run: systemctl start gocryptfs-mount.service"
+        return 1
+    fi
+
+    log_success "gocryptfs is mounted at ${MOUNT_CLEAR}"
+    return 0
+}
+
 # Start services
 start_services() {
     log "Starting docker-compose services..."
@@ -126,6 +141,12 @@ main() {
 
     if [[ ! -f "docker-compose.yml" ]]; then
         log_error "docker-compose.yml not found in ${REPO_DIR}"
+        exit 1
+    fi
+
+    # Verify gocryptfs mount before starting containers
+    if ! verify_gocryptfs_mount; then
+        log_error "Cannot start docker-compose without gocryptfs mount"
         exit 1
     fi
 
