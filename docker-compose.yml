@@ -3,6 +3,8 @@ services:
     image: jellyfin/jellyfin:10.8.13
     container_name: jellyfin
     restart: unless-stopped
+    mem_limit: 2g
+    cpus: 2.0
     ports:
       - "8096:8096"   # HTTP (direct access)
     volumes:
@@ -28,6 +30,8 @@ services:
       dockerfile: Dockerfile
     container_name: caddy
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
     depends_on:
       jellyfin:
         condition: service_healthy
