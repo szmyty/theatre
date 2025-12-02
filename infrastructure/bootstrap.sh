@@ -329,9 +329,30 @@ verify_jellyfin_mount() {
     fi
 }
 
+# Verify gocryptfs mount is ready before starting containers
+verify_gocryptfs_mount_ready() {
+    log "Verifying gocryptfs mount is ready..."
+    
+    if ! mountpoint -q "${MOUNT_POINT}"; then
+        log "ERROR: gocryptfs clear mount is not available at ${MOUNT_POINT}"
+        log "ERROR: Please ensure gocryptfs is mounted before starting Docker containers"
+        log "ERROR: Run: systemctl start gocryptfs-mount.service"
+        return 1
+    fi
+    
+    log "gocryptfs clear mount is available at ${MOUNT_POINT}"
+    return 0
+}
+
 # Start docker-compose
 start_docker_compose() {
     log "Starting docker-compose..."
+    
+    # Verify gocryptfs mount before starting containers
+    if ! verify_gocryptfs_mount_ready; then
+        log "ERROR: Cannot start docker-compose without gocryptfs mount"
+        exit 1
+    fi
     
     cd "${PROJECT_ROOT}"
     

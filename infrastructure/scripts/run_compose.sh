@@ -79,13 +79,14 @@ check_mounts() {
     fi
     log "Media disk mounted at ${MOUNT_POINT}"
     
-    # Check gocryptfs mount (optional)
-    if mountpoint -q "${MOUNT_CLEAR}" 2>/dev/null; then
-        log "gocryptfs mounted at ${MOUNT_CLEAR}"
-    else
-        log_warn "gocryptfs NOT mounted at ${MOUNT_CLEAR}"
-        log_warn "Encrypted media will not be available"
+    # Check gocryptfs mount (required)
+    if ! mountpoint -q "${MOUNT_CLEAR}" 2>/dev/null; then
+        log_error "gocryptfs is not mounted at ${MOUNT_CLEAR}"
+        log_error "Please ensure gocryptfs is mounted before starting Docker containers"
+        log_error "Run: systemctl start gocryptfs-mount.service"
+        exit 1
     fi
+    log_success "gocryptfs mounted at ${MOUNT_CLEAR}"
 }
 
 # Pre-flight check: verify Docker
