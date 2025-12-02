@@ -217,6 +217,7 @@ main() {
     log ""
     log "Next steps:"
     log "  1. Start gocryptfs mount: sudo systemctl start gocryptfs-mount"
+    log "     (Or your configured gocryptfs service name)"
     log "  2. Start Jellyfin: docker compose up -d"
 }
 
