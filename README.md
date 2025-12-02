@@ -362,7 +362,7 @@ sudo systemctl stop gocryptfs-mount
 
 - **Backup your password**: Without the password, encrypted data cannot be recovered
 - **Backup gocryptfs.conf**: This file in the encrypted directory contains the encrypted master key
-- **Password file security**: Ensure `/etc/gocryptfs/password` has mode 600 and is owned by root
+- **Password file security**: Ensure `/etc/gocryptfs/passfile` has mode 600 and is owned by root
 
 For detailed setup instructions, see [docs/SETUP.md](docs/SETUP.md) and [docs/GOCRYPTFS-SERVICE.md](docs/GOCRYPTFS-SERVICE.md).
 
