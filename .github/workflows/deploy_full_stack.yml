@@ -94,6 +94,12 @@ jobs:
 
       - name: Upload secrets and run provisioning
         run: |
+          # Trap to ensure secrets.env is always cleaned up on exit (success, failure, or interrupt)
+          cleanup_local_secrets() {
+            rm -f /tmp/secrets.env
+          }
+          trap cleanup_local_secrets EXIT
+          
           cat > /tmp/secrets.env << EOF
           GOCRYPTFS_PASSWORD=${GOCRYPTFS_PASSWORD}
           DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
@@ -103,12 +109,16 @@ jobs:
           EOF
           chmod 600 /tmp/secrets.env
           gcloud compute scp /tmp/secrets.env "${VM_NAME}:/tmp/secrets.env" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --quiet
-          rm -f /tmp/secrets.env
+          # Note: Local cleanup is now handled by the trap, so we remove the explicit rm here
           gcloud compute ssh "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --command="
             set -euo pipefail
+            # Trap to ensure secrets.env is always cleaned up on the VM
+            cleanup_vm_secrets() {
+              rm -f /tmp/secrets.env
+            }
+            trap cleanup_vm_secrets EXIT
             sudo chmod 600 /tmp/secrets.env
             set -a && source /tmp/secrets.env && set +a
-            rm -f /tmp/secrets.env
             
             # 1. Ensure disk exists and is formatted
             sudo -E ${SCRIPTS_DIR}/ensure_disk.sh
