@@ -67,7 +67,7 @@ runcmd:
   - /opt/theatre/setup-disk.sh
 
   # Clone the repository
-  - git clone https://github.com/szmyty/theatre.git /opt/theatre/repo
+  - git clone --depth 1 https://github.com/szmyty/theatre.git /opt/theatre/repo
 
   # Run bootstrap script
   - /opt/theatre/repo/infrastructure/bootstrap.sh
