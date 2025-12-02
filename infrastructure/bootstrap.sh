@@ -386,7 +386,7 @@ main() {
     log ""
     log "Next steps:"
     log "  1. Initialize gocryptfs: gocryptfs --init \"${ENCRYPTED_DIR}\""
-    log "  2. Create passfile: echo 'your-password' > \"${GOCRYPTFS_ENV_DIR}/passfile\" && chmod 600 \"${GOCRYPTFS_ENV_DIR}/passfile\""
+    log "  2. Create passfile: (umask 077 && printf '%s' 'your-password' > \"${GOCRYPTFS_ENV_DIR}/passfile\")"
     log "  3. Verify initialization: ls \"${ENCRYPTED_DIR}/gocryptfs.conf\""
     log "  4. Start the mount service: systemctl start gocryptfs-mount.service"
     log "  5. Access Jellyfin at http://localhost:8096"
