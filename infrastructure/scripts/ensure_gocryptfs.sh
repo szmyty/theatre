@@ -118,10 +118,10 @@ setup_gocryptfs_env() {
     chmod 700 "${GOCRYPTFS_ENV_DIR}"
 
     # Create password file if GOCRYPTFS_PASSWORD is set
+    # Use subshell with umask 077 for atomic secure file creation
+    # This ensures no intermediate insecure state exists
     if [[ -n "${GOCRYPTFS_PASSWORD:-}" ]]; then
-        touch "${GOCRYPTFS_PASSFILE}"
-        chmod 600 "${GOCRYPTFS_PASSFILE}"
-        printf '%s' "${GOCRYPTFS_PASSWORD}" > "${GOCRYPTFS_PASSFILE}"
+        (umask 077 && printf '%s' "${GOCRYPTFS_PASSWORD}" > "${GOCRYPTFS_PASSFILE}")
         log "Password file created"
     fi
 
