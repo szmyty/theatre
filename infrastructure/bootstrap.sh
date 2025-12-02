@@ -334,13 +334,13 @@ verify_gocryptfs_mount_ready() {
     log "Verifying gocryptfs mount is ready..."
     
     if ! mountpoint -q "${MOUNT_POINT}"; then
-        log "ERROR: gocryptfs is not mounted at ${MOUNT_POINT}"
+        log "ERROR: gocryptfs clear mount is not available at ${MOUNT_POINT}"
         log "ERROR: Please ensure gocryptfs is mounted before starting Docker containers"
         log "ERROR: Run: systemctl start gocryptfs-mount.service"
         return 1
     fi
     
-    log "gocryptfs is mounted at ${MOUNT_POINT}"
+    log "gocryptfs clear mount is available at ${MOUNT_POINT}"
     return 0
 }
 
