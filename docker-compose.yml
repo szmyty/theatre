@@ -19,6 +19,8 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    networks:
+      - theatre
 
   caddy:
     build:
@@ -46,7 +48,13 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - theatre
 
 volumes:
   caddy_data:
   caddy_config:
+
+networks:
+  theatre:
+    driver: bridge
