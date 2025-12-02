@@ -114,7 +114,7 @@ jobs:
             set -euo pipefail
             # Trap to ensure secrets.env is always cleaned up on the VM
             cleanup_vm_secrets() {
-              sudo rm -f /tmp/secrets.env
+              rm -f /tmp/secrets.env
             }
             trap cleanup_vm_secrets EXIT
             sudo chmod 600 /tmp/secrets.env
