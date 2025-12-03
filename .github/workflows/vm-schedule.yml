@@ -1,0 +1,149 @@
+# VM Schedule - Automated VM shutdown/startup to reduce GCP costs
+# Shuts down VM during off-peak hours and starts it during active hours
+name: VM Schedule
+
+on:
+  # Schedule: Shutdown at 11:00 PM UTC, Startup at 7:00 AM UTC
+  schedule:
+    - cron: '0 23 * * *'  # Shutdown (off-peak hours)
+    - cron: '0 7 * * *'   # Startup (active hours)
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'status'
+        type: choice
+        options:
+          - start
+          - stop
+          - status
+
+permissions:
+  contents: read
+
+env:
+  VM_NAME: ${{ vars.GCP_VM_NAME || 'theatre-vm' }}
+
+jobs:
+  vm-action:
+    name: VM Action
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Determine action
+        id: action
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            # Use github.event.schedule to determine which cron triggered this run
+            # Fallback to time-based detection if schedule context is empty
+            CRON="${{ github.event.schedule }}"
+            if [[ -n "${CRON}" ]]; then
+              if [[ "${CRON}" == "0 23 * * *" ]]; then
+                echo "action=stop" >> "$GITHUB_OUTPUT"
+                echo "Scheduled action: STOP (off-peak hours, cron: ${CRON})"
+              elif [[ "${CRON}" == "0 7 * * *" ]]; then
+                echo "action=start" >> "$GITHUB_OUTPUT"
+                echo "Scheduled action: START (active hours, cron: ${CRON})"
+              else
+                echo "action=status" >> "$GITHUB_OUTPUT"
+                echo "Unknown schedule: ${CRON}, checking status only"
+              fi
+            else
+              # Fallback: determine action from current UTC hour
+              HOUR=$(date -u +%H)
+              if [[ "${HOUR}" == "23" ]]; then
+                echo "action=stop" >> "$GITHUB_OUTPUT"
+                echo "Scheduled action: STOP (off-peak hours, hour: ${HOUR})"
+              elif [[ "${HOUR}" == "07" ]]; then
+                echo "action=start" >> "$GITHUB_OUTPUT"
+                echo "Scheduled action: START (active hours, hour: ${HOUR})"
+              else
+                echo "action=status" >> "$GITHUB_OUTPUT"
+                echo "Unexpected hour: ${HOUR}, checking status only"
+              fi
+            fi
+          else
+            # Use manual input
+            echo "action=${{ github.event.inputs.action }}" >> "$GITHUB_OUTPUT"
+            echo "Manual action: ${{ github.event.inputs.action }}"
+          fi
+
+      - name: Get current VM status
+        id: current_status
+        run: |
+          STATUS=$(gcloud compute instances describe "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --format="value(status)" 2>/dev/null || echo "NOT_FOUND")
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+          echo "Current VM status: ${STATUS}"
+
+      - name: Stop VM
+        if: steps.action.outputs.action == 'stop' && steps.current_status.outputs.status == 'RUNNING'
+        run: |
+          echo "Stopping VM ${VM_NAME}..."
+          gcloud compute instances stop "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}"
+          echo "::notice::VM ${VM_NAME} has been stopped"
+
+      - name: Start VM
+        if: steps.action.outputs.action == 'start' && (steps.current_status.outputs.status == 'TERMINATED' || steps.current_status.outputs.status == 'STOPPED')
+        run: |
+          echo "Starting VM ${VM_NAME}..."
+          gcloud compute instances start "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}"
+          
+          # Wait for VM to be running with timeout handling
+          STARTED=false
+          for i in {1..12}; do
+            STATUS=$(gcloud compute instances describe "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --format="value(status)" 2>/dev/null)
+            if [[ "${STATUS}" == "RUNNING" ]]; then
+              echo "::notice::VM ${VM_NAME} is now running"
+              STARTED=true
+              break
+            fi
+            echo "Waiting for VM to start (${i}/12)..."
+            sleep 10
+          done
+          
+          if [[ "${STARTED}" != "true" ]]; then
+            echo "::error::VM ${VM_NAME} failed to start within 120 seconds"
+            exit 1
+          fi
+
+      - name: Print status
+        run: |
+          STATUS=$(gcloud compute instances describe "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --format="value(status)" 2>/dev/null || echo "NOT_FOUND")
+          IP=$(gcloud compute instances describe "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --format="value(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || echo "N/A")
+          echo "============================================================"
+          echo "                 VM STATUS"
+          echo "============================================================"
+          echo "VM: ${VM_NAME}"
+          echo "Status: ${STATUS}"
+          echo "IP: ${IP}"
+          echo "Action: ${{ steps.action.outputs.action }}"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "============================================================"

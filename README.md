@@ -581,7 +581,6 @@ The following automation improvements are planned or in progress:
 - [ ] **Monitoring & Alerting**: Integration with Prometheus/Grafana for system monitoring
 - [ ] **Multi-region Deployment**: Support for deploying to multiple regions for better latency
 - [ ] **GitHub Actions Improvements**:
-  - Automatic VM shutdown/startup scheduling
   - Deployment status notifications
   - Automated gocryptfs password management with Secret Manager
 
@@ -596,6 +595,39 @@ The following automation improvements are planned or in progress:
 | GitHub Actions Deploy | ✅ Complete | One-click VM deployment workflow |
 | Automatic HTTPS | ✅ Complete | Caddy reverse proxy with Let's Encrypt via DuckDNS DNS-01 |
 | Automated Backups | ✅ Complete | GCS sync and GCP disk snapshots with GitHub Actions workflow |
+| VM Schedule | ✅ Complete | Automated VM shutdown/startup to reduce GCP costs |
+
+### VM Schedule
+
+The **VM Schedule** workflow automatically manages the VM power state to reduce GCP costs during inactive periods.
+
+#### Default Schedule (UTC)
+
+| Time | Action | Purpose |
+|------|--------|---------|
+| 07:00 | Start VM | Begin active hours |
+| 23:00 | Stop VM | End active hours, reduce costs |
+
+#### Manual Control
+
+You can also manually start, stop, or check the VM status:
+
+1. Go to **Actions** → **VM Schedule**
+2. Click **Run workflow**
+3. Select the action:
+   - `start` - Start the VM
+   - `stop` - Stop the VM
+   - `status` - Check current VM status
+
+#### Cost Savings
+
+With the default schedule, the VM runs for 16 hours per day instead of 24 hours, reducing compute costs by approximately 33%. Stopped VMs only incur storage costs for attached disks.
+
+**Note:** When the VM is stopped:
+- The theatre will be inaccessible
+- No charges for compute resources
+- Persistent disk storage charges still apply
+- DuckDNS will point to the last known IP (may become stale)
 
 ### Contributing
 
