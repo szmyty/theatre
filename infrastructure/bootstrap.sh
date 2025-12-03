@@ -6,32 +6,26 @@
 
 set -euo pipefail
 
-# Configuration
-ENCRYPTED_DIR="/mnt/disks/media/.library_encrypted"
-MOUNT_POINT="/srv/library_clear"
-GOCRYPTFS_ENV_DIR="/etc/gocryptfs"
-GOCRYPTFS_ENV_FILE="${GOCRYPTFS_ENV_DIR}/gocryptfs.env"
-SYSTEMD_SERVICE_FILE="/etc/systemd/system/gocryptfs-mount.service"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
+
+# Source common utilities and shared provisioning logic
+# shellcheck source=scripts/common.sh
+source "${SCRIPT_DIR}/scripts/common.sh"
+# shellcheck source=scripts/provision_common.sh
+source "${SCRIPT_DIR}/scripts/provision_common.sh"
+
+# Override REPO_DIR to use PROJECT_ROOT for bootstrap context
+# (bootstrap runs from within the infrastructure directory, not /opt/theatre/repo)
+REPO_DIR="${PROJECT_ROOT}"
+
+# Configuration (using common.sh defaults where available)
+SYSTEMD_SERVICE_FILE="/etc/systemd/system/gocryptfs-mount.service"
 
 # Docker and containerd data root configuration
 MEDIA_DISK_MOUNT="/mnt/disks/media"
 DOCKER_DATA_ROOT="${MEDIA_DISK_MOUNT}/docker"
 CONTAINERD_DATA_ROOT="${MEDIA_DISK_MOUNT}/containerd"
-
-# Helper function for logging
-log() {
-    echo "[$(date --iso-8601=seconds)] $*"
-}
-
-# Check if running as root
-check_root() {
-    if [[ "${EUID}" -ne 0 ]]; then
-        log "ERROR: This script must be run as root"
-        exit 1
-    fi
-}
 
 # Install Docker using the consolidated install script
 install_docker() {
@@ -156,95 +150,6 @@ verify_docker_data_root() {
     fi
 }
 
-# Install gocryptfs
-install_gocryptfs() {
-    log "Installing gocryptfs..."
-    
-    if command -v gocryptfs &>/dev/null; then
-        log "gocryptfs is already installed"
-        return 0
-    fi
-    
-    # Update package list and install gocryptfs
-    apt-get update --quiet
-    apt-get install --yes --quiet gocryptfs fuse
-    
-    log "gocryptfs installed successfully"
-}
-
-# Create encrypted backing directory
-create_encrypted_directory() {
-    log "Creating encrypted backing directory at ${ENCRYPTED_DIR}..."
-    
-    if [[ -d "${ENCRYPTED_DIR}" ]]; then
-        log "Encrypted directory already exists"
-        return 0
-    fi
-    
-    mkdir --parents "${ENCRYPTED_DIR}"
-    chmod 700 "${ENCRYPTED_DIR}"
-    
-    log "Encrypted directory created successfully"
-}
-
-# Create decrypted mount directory
-create_mount_directory() {
-    log "Creating decrypted mount directory at ${MOUNT_POINT}..."
-    
-    if [[ -d "${MOUNT_POINT}" ]]; then
-        log "Mount directory already exists"
-        return 0
-    fi
-    
-    mkdir --parents "${MOUNT_POINT}"
-    chmod 755 "${MOUNT_POINT}"
-    
-    log "Mount directory created successfully"
-}
-
-# Setup gocryptfs environment file
-setup_gocryptfs_env() {
-    log "Setting up gocryptfs environment file..."
-    
-    mkdir --parents "${GOCRYPTFS_ENV_DIR}"
-    
-    if [[ ! -f "${GOCRYPTFS_ENV_FILE}" ]]; then
-        cat > "${GOCRYPTFS_ENV_FILE}" << EOF
-# gocryptfs configuration
-GOCRYPTFS_ENCRYPTED_DIR=${ENCRYPTED_DIR}
-GOCRYPTFS_MOUNT_POINT=${MOUNT_POINT}
-GOCRYPTFS_PASSFILE=${GOCRYPTFS_ENV_DIR}/passfile
-EOF
-        chmod 600 "${GOCRYPTFS_ENV_FILE}"
-        log "Created gocryptfs environment file"
-        log "WARNING: You must create ${GOCRYPTFS_ENV_DIR}/passfile with your encryption password"
-    else
-        log "gocryptfs environment file already exists"
-    fi
-}
-
-# Install and enable systemd service
-enable_systemd_service() {
-    log "Enabling systemd service..."
-    
-    # Copy the systemd service file from the project
-    local service_source="${SCRIPT_DIR}/systemd/gocryptfs-mount.service"
-    
-    if [[ -f "${service_source}" ]]; then
-        cp --force "${service_source}" "${SYSTEMD_SERVICE_FILE}"
-        chmod 644 "${SYSTEMD_SERVICE_FILE}"
-    else
-        log "ERROR: Service file not found at ${service_source}"
-        exit 1
-    fi
-    
-    # Reload systemd and enable the service
-    systemctl daemon-reload
-    systemctl enable gocryptfs-mount.service
-    
-    log "Systemd service enabled successfully"
-}
-
 # Remove stale config/jellyfin directory from repo
 # Docker ALWAYS prioritizes an existing host directory over a declared volume,
 # which completely overrides our intended volume mapping.
@@ -321,14 +226,14 @@ verify_jellyfin_mount() {
 verify_gocryptfs_mount_ready() {
     log "Verifying gocryptfs mount is ready..."
     
-    if ! mountpoint -q "${MOUNT_POINT}"; then
-        log "ERROR: gocryptfs clear mount is not available at ${MOUNT_POINT}"
-        log "ERROR: Please ensure gocryptfs is mounted before starting Docker containers"
-        log "ERROR: Run: systemctl start gocryptfs-mount.service"
+    if ! mountpoint -q "${MOUNT_CLEAR}"; then
+        log_error "gocryptfs clear mount is not available at ${MOUNT_CLEAR}"
+        log_error "Please ensure gocryptfs is mounted before starting Docker containers"
+        log_error "Run: systemctl start gocryptfs-mount.service"
         return 1
     fi
     
-    log "gocryptfs clear mount is available at ${MOUNT_POINT}"
+    log_success "gocryptfs clear mount is available at ${MOUNT_CLEAR}"
     return 0
 }
 
@@ -338,14 +243,14 @@ start_docker_compose() {
     
     # Verify gocryptfs mount before starting containers
     if ! verify_gocryptfs_mount_ready; then
-        log "ERROR: Cannot start docker-compose without gocryptfs mount"
+        log_error "Cannot start docker-compose without gocryptfs mount"
         exit 1
     fi
     
     cd "${PROJECT_ROOT}"
     
     if [[ ! -f "docker-compose.yml" ]]; then
-        log "ERROR: docker-compose.yml not found in ${PROJECT_ROOT}"
+        log_error "docker-compose.yml not found in ${PROJECT_ROOT}"
         exit 1
     fi
     
@@ -370,28 +275,32 @@ start_docker_compose() {
     # Verify correct mount after starting containers
     sleep 5  # Give container time to start
     if ! verify_jellyfin_mount; then
-        log "ERROR: Deploy failed - Jellyfin is using incorrect mount"
+        log_error "Deploy failed - Jellyfin is using incorrect mount"
         exit 1
     fi
     
-    log "docker-compose started successfully"
+    log_success "docker-compose started successfully"
 }
 
 # Main function
 main() {
     log "Starting VM bootstrap..."
     
-    check_root
+    require_root
     install_docker
     migrate_docker_data_root
-    install_gocryptfs
-    create_encrypted_directory
-    create_mount_directory
-    setup_gocryptfs_env
-    enable_systemd_service
+    
+    # Use shared provisioning functions for gocryptfs setup
+    provision_install_gocryptfs
+    provision_configure_fuse
+    provision_create_encrypted_dir
+    provision_create_mount_point
+    provision_setup_gocryptfs_env
+    provision_install_gocryptfs_systemd
+    
     start_docker_compose
     
-    log "VM bootstrap completed successfully"
+    log_success "VM bootstrap completed successfully"
     log ""
     log "Next steps:"
     log "  1. Initialize gocryptfs: gocryptfs --init \"${ENCRYPTED_DIR}\""
