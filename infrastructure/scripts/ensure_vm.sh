@@ -47,6 +47,7 @@ Options:
     --image-project PROJ   Image project (default: debian-cloud)
     --boot-disk-size SIZE  Boot disk size (default: 20GB)
     --cloud-init FILE      Cloud-init file path
+    --labels LABELS        GCP labels for cost tracking (comma-separated key=value pairs)
     -h, --help             Show this help message
 
 Environment Variables:
@@ -58,9 +59,11 @@ Environment Variables:
     IMAGE_PROJECT          Image project
     BOOT_DISK_SIZE         Boot disk size
     CLOUD_INIT_FILE        Cloud-init file path
+    GCP_LABELS             GCP labels for cost tracking
 
 Examples:
     $(basename "$0") --vm-name myvm --project-id myproject --zone us-central1-a
+    $(basename "$0") --vm-name myvm --project-id myproject --zone us-central1-a --labels "project=theatre,env=prod"
 EOF
 }
 
@@ -70,6 +73,9 @@ IMAGE_FAMILY="${IMAGE_FAMILY:-debian-12}"
 IMAGE_PROJECT="${IMAGE_PROJECT:-debian-cloud}"
 BOOT_DISK_SIZE="${BOOT_DISK_SIZE:-20GB}"
 CLOUD_INIT_FILE="${CLOUD_INIT_FILE:-}"
+
+# GCP labels for cost tracking (comma-separated key=value pairs)
+GCP_LABELS="${GCP_LABELS:-project=theatre,environment=production,managed-by=script}"
 
 # Parse command line arguments
 parse_args() {
@@ -105,6 +111,10 @@ parse_args() {
                 ;;
             --cloud-init)
                 CLOUD_INIT_FILE="$2"
+                shift 2
+                ;;
+            --labels)
+                GCP_LABELS="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -164,6 +174,11 @@ create_vm() {
     # Add cloud-init if file exists
     if [[ -n "${CLOUD_INIT_FILE}" ]] && [[ -f "${CLOUD_INIT_FILE}" ]]; then
         gcloud_args+=("--metadata-from-file=user-data=${CLOUD_INIT_FILE}")
+    fi
+
+    # Add labels for cost tracking
+    if [[ -n "${GCP_LABELS}" ]]; then
+        gcloud_args+=("--labels=${GCP_LABELS}")
     fi
 
     gcloud compute instances create "${gcloud_args[@]}"

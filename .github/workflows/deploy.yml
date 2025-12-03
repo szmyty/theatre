@@ -13,6 +13,7 @@ env:
   IMAGE_PROJECT: debian-cloud
   BOOT_DISK_SIZE: 20GB
   CLOUD_INIT_FILE: infrastructure/cloud-init.yaml
+  GCP_LABELS: project=theatre,environment=production,managed-by=github-actions
 
 jobs:
   deploy:
@@ -57,7 +58,8 @@ jobs:
               --image-project="${IMAGE_PROJECT}" \
               --boot-disk-size="${BOOT_DISK_SIZE}" \
               --metadata-from-file=user-data="${CLOUD_INIT_FILE}" \
-              --tags=http-server,https-server
+              --tags=http-server,https-server \
+              --labels="${GCP_LABELS}"
           fi
 
       - name: Start VM

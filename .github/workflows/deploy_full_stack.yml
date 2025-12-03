@@ -19,6 +19,7 @@ env:
   MEDIA_DISK_SIZE: 200GB
   MEDIA_DISK_TYPE: pd-standard
   SCRIPTS_DIR: /opt/theatre/scripts
+  GCP_LABELS: project=theatre,environment=production,managed-by=github-actions
 
 jobs:
   deploy:
@@ -38,14 +39,14 @@ jobs:
       - name: Ensure media disk exists
         run: |
           gcloud compute disks describe "${MEDIA_DISK_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --quiet 2>/dev/null || \
-          gcloud compute disks create "${MEDIA_DISK_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --size="${MEDIA_DISK_SIZE}" --type="${MEDIA_DISK_TYPE}"
+          gcloud compute disks create "${MEDIA_DISK_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --size="${MEDIA_DISK_SIZE}" --type="${MEDIA_DISK_TYPE}" --labels="${GCP_LABELS}"
 
       - name: Ensure VM exists
         run: |
           gcloud compute instances describe "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" --quiet 2>/dev/null || \
           gcloud compute instances create "${VM_NAME}" --project="${{ secrets.GCP_PROJECT_ID }}" --zone="${{ secrets.GCP_ZONE }}" \
             --machine-type="${MACHINE_TYPE}" --image-family="${IMAGE_FAMILY}" --image-project="${IMAGE_PROJECT}" \
-            --boot-disk-size="${BOOT_DISK_SIZE}" --metadata-from-file=user-data="${CLOUD_INIT_FILE}" --tags=http-server,https-server
+            --boot-disk-size="${BOOT_DISK_SIZE}" --metadata-from-file=user-data="${CLOUD_INIT_FILE}" --tags=http-server,https-server --labels="${GCP_LABELS}"
 
       - name: Ensure media disk is attached
         run: |
