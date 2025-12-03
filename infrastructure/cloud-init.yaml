@@ -18,23 +18,72 @@ write_files:
       #!/bin/bash
       set -euo pipefail
       
-      # Default disk device for Google Cloud attached disks
-      # Override via cloud-init metadata if needed
-      DISK_DEVICE="${DISK_DEVICE:-/dev/sdb}"
-      MOUNT_POINT="/mnt/disks/data"
+      MOUNT_POINT="/mnt/disks/media"
+      # Disk label to search for (used in Google Cloud disk names)
+      DISK_LABEL="${DISK_LABEL:-media}"
       
-      # Wait for disk to be available
+      # Discover media disk dynamically via /dev/disk/by-id/
+      # Searches for Google Cloud persistent disks first, then falls back to
+      # non-boot disks without partitions.
+      discover_media_disk() {
+        local disk_path=""
+        
+        # Priority 1: Check for Google Cloud persistent disk by name pattern
+        # Google Cloud disks appear as google-<disk-name> in /dev/disk/by-id/
+        if [ -d /dev/disk/by-id ]; then
+          # Try exact match: google-<label>
+          disk_path="/dev/disk/by-id/google-${DISK_LABEL}"
+          if [ -b "${disk_path}" ]; then
+            echo "${disk_path}"
+            return 0
+          fi
+        fi
+        
+        # Priority 2: Check for disk by filesystem label
+        if [ -d /dev/disk/by-label ]; then
+          disk_path="/dev/disk/by-label/${DISK_LABEL}"
+          if [ -b "${disk_path}" ]; then
+            echo "${disk_path}"
+            return 0
+          fi
+        fi
+        
+        # Priority 3: Find first non-boot block device
+        local boot_disk=""
+        boot_disk=$(df / 2>/dev/null | tail -1 | awk '{print $1}' | sed 's/[0-9]*$//' || true)
+        
+        for dev in /dev/sd[b-z] /dev/vd[b-z] /dev/nvme[0-9]n[1-9]; do
+          if [ -b "${dev}" ] && [ "${dev}" != "${boot_disk}" ]; then
+            echo "${dev}"
+            return 0
+          fi
+        done
+        
+        echo ""
+        return 1
+      }
+      
+      # Allow override via DISK_DEVICE env var, otherwise discover dynamically
+      if [ -z "${DISK_DEVICE:-}" ]; then
+        DISK_DEVICE=$(discover_media_disk) || DISK_DEVICE=""
+      fi
+      
+      # Wait for disk to be available (retry discovery if needed)
       for i in {1..30}; do
-        if [ -b "${DISK_DEVICE}" ]; then
+        if [ -n "${DISK_DEVICE}" ] && [ -b "${DISK_DEVICE}" ]; then
           break
         fi
+        echo "Waiting for disk... attempt ${i}/30"
         sleep 2
+        DISK_DEVICE=$(discover_media_disk) || DISK_DEVICE=""
       done
       
-      if [ ! -b "${DISK_DEVICE}" ]; then
-        echo "Disk device ${DISK_DEVICE} not found, skipping disk setup"
+      if [ -z "${DISK_DEVICE}" ] || [ ! -b "${DISK_DEVICE}" ]; then
+        echo "No disk device found, skipping disk setup"
         exit 0
       fi
+      
+      echo "Using disk device: ${DISK_DEVICE}"
       
       # Check if disk is already formatted
       if ! blkid "${DISK_DEVICE}" &>/dev/null; then
@@ -50,9 +99,18 @@ write_files:
         mount "${DISK_DEVICE}" "${MOUNT_POINT}"
       fi
       
-      # Add to fstab if not already present
-      if ! grep -q "${DISK_DEVICE}" /etc/fstab; then
+      # Get UUID for fstab entry (more stable than device path)
+      DISK_UUID=$(blkid -s UUID -o value "${DISK_DEVICE}" 2>/dev/null || true)
+      
+      # Add to fstab using UUID if available, otherwise use device path
+      if [ -n "${DISK_UUID}" ]; then
+        if ! grep -q "UUID=${DISK_UUID}" /etc/fstab; then
+          echo "UUID=${DISK_UUID} ${MOUNT_POINT} ext4 defaults,nofail 0 2" >> /etc/fstab
+          echo "Added fstab entry using UUID=${DISK_UUID}"
+        fi
+      elif ! grep -q "${DISK_DEVICE}" /etc/fstab; then
         echo "${DISK_DEVICE} ${MOUNT_POINT} ext4 defaults,nofail 0 2" >> /etc/fstab
+        echo "Added fstab entry using device path ${DISK_DEVICE}"
       fi
       
       echo "Disk setup complete"

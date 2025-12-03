@@ -19,15 +19,24 @@ Usage: $(basename "$0") [OPTIONS]
 Formats the media disk with ext4 filesystem if not already formatted.
 
 Options:
-    -d, --device DEVICE    Disk device path (default: /dev/sdb)
+    -d, --device DEVICE    Disk device path (auto-detected via /dev/disk/by-id/)
+    -l, --label LABEL      Disk label to search for (default: media)
     -h, --help             Show this help message
 
 Environment Variables:
-    DISK_DEVICE            Override default disk device path
+    DISK_DEVICE            Override disk device path (bypasses auto-detection)
+    DISK_LABEL             Label to search for when auto-detecting disk
+
+Disk Discovery Order:
+    1. DISK_DEVICE environment variable (if set)
+    2. Google Cloud disk by label: /dev/disk/by-id/google-<label>
+    3. Filesystem label: /dev/disk/by-label/<label>
+    4. First non-boot block device (e.g., /dev/sdb, /dev/vdb)
 
 Examples:
     $(basename "$0")
-    $(basename "$0") --device /dev/sdc
+    $(basename "$0") --device /dev/disk/by-id/google-media
+    $(basename "$0") --label data
 EOF
 }
 
@@ -37,6 +46,11 @@ parse_args() {
         case "$1" in
             -d|--device)
                 DISK_DEVICE="$2"
+                shift 2
+                ;;
+            -l|--label)
+                export DISK_LABEL="$2"
+                DISK_DEVICE=$(discover_media_disk) || DISK_DEVICE=""
                 shift 2
                 ;;
             -h|--help)

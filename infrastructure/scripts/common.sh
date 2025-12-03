@@ -47,9 +47,62 @@ require_root() {
     fi
 }
 
+# Discover media disk dynamically via /dev/disk/by-id/
+# Searches for Google Cloud persistent disks first, then falls back to
+# non-boot disks without partitions.
+# Usage: DISK_DEVICE=$(discover_media_disk)
+discover_media_disk() {
+    local disk_path=""
+    local disk_label="${DISK_LABEL:-media}"
+    
+    # Priority 1: Check for Google Cloud persistent disk by name pattern
+    # Google Cloud disks appear as google-<disk-name> in /dev/disk/by-id/
+    if [[ -d /dev/disk/by-id ]]; then
+        # Try exact match first: google-<label>
+        disk_path="/dev/disk/by-id/google-${disk_label}"
+        if [[ -b "${disk_path}" ]]; then
+            echo "${disk_path}"
+            return 0
+        fi
+    fi
+    
+    # Priority 2: Check for disk by filesystem label
+    if [[ -d /dev/disk/by-label ]]; then
+        disk_path="/dev/disk/by-label/${disk_label}"
+        if [[ -b "${disk_path}" ]]; then
+            echo "${disk_path}"
+            return 0
+        fi
+    fi
+    
+    # Priority 3: Find first non-boot block device without partitions
+    # This handles cases where disk IDs are not available
+    local boot_disk=""
+    boot_disk=$(df / 2>/dev/null | tail -1 | awk '{print $1}' | sed 's/[0-9]*$//' || true)
+    
+    for dev in /dev/sd[b-z] /dev/vd[b-z] /dev/nvme[0-9]n[1-9]; do
+        if [[ -b "${dev}" ]]; then
+            # Skip the boot disk
+            if [[ "${dev}" == "${boot_disk}" ]]; then
+                continue
+            fi
+            # Return the first matching disk
+            echo "${dev}"
+            return 0
+        fi
+    done
+    
+    # Fallback: return empty string if no disk found
+    echo ""
+    return 1
+}
+
 # Common paths used across scripts
 MOUNT_POINT="${MOUNT_POINT:-/mnt/disks/media}"
-DISK_DEVICE="${DISK_DEVICE:-/dev/sdb}"
+# Use DISK_DEVICE env var if set, otherwise discover dynamically
+if [[ -z "${DISK_DEVICE:-}" ]]; then
+    DISK_DEVICE=$(discover_media_disk) || DISK_DEVICE=""
+fi
 REPO_DIR="${REPO_DIR:-/opt/theatre/repo}"
 REPO_URL="${REPO_URL:-https://github.com/szmyty/theatre.git}"
 
