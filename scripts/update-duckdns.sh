@@ -13,6 +13,8 @@ SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 # Retry configuration
 MAX_RETRIES="${MAX_RETRIES:-5}"
 INITIAL_DELAY="${INITIAL_DELAY:-2}"
+MAX_DELAY="${MAX_DELAY:-30}"
+FAIL_GRACEFULLY="${FAIL_GRACEFULLY:-true}"
 
 # Helper function for logging
 log() {
@@ -33,6 +35,8 @@ Required Environment Variables:
 Optional Environment Variables:
     MAX_RETRIES       Maximum number of retry attempts (default: 5)
     INITIAL_DELAY     Initial delay in seconds between retries (default: 2)
+    MAX_DELAY         Maximum delay in seconds between retries (default: 30)
+    FAIL_GRACEFULLY   Exit with 0 on failure for systemd timer (default: true)
 
 Options:
     -h, --help    Show this help message and exit
@@ -92,6 +96,10 @@ update_duckdns() {
         sleep "${delay}"
         attempt=$((attempt + 1))
         delay=$((delay * 2))  # Exponential backoff
+        # Cap the delay at MAX_DELAY
+        if [[ ${delay} -gt ${MAX_DELAY} ]]; then
+            delay="${MAX_DELAY}"
+        fi
     done
 }
 
@@ -106,9 +114,14 @@ main() {
     validate_env
 
     if ! update_duckdns; then
-        log "Continuing gracefully after DuckDNS update failure"
-        # Exit with 0 to allow systemd timer to continue scheduling
-        exit 0
+        if [[ "${FAIL_GRACEFULLY}" == "true" ]]; then
+            log "Continuing gracefully after DuckDNS update failure"
+            # Exit with 0 to allow systemd timer to continue scheduling
+            exit 0
+        else
+            log "Exiting with error after DuckDNS update failure"
+            exit 1
+        fi
     fi
 }
 
