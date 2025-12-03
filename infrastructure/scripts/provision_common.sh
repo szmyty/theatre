@@ -195,7 +195,7 @@ provision_gocryptfs_full() {
     provision_initialize_gocryptfs
     provision_mount_gocryptfs
     provision_install_gocryptfs_systemd
-    
+
     # Verify mount status (non-fatal - mount may require manual setup)
     provision_verify_gocryptfs_mount || log_warn "gocryptfs mount verification skipped or failed - manual setup may be required"
 }
