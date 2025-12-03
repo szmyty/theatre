@@ -31,13 +31,12 @@ write_files:
         # Priority 1: Check for Google Cloud persistent disk by name pattern
         # Google Cloud disks appear as google-<disk-name> in /dev/disk/by-id/
         if [ -d /dev/disk/by-id ]; then
-          for pattern in "google-${DISK_LABEL}" "google-*${DISK_LABEL}*"; do
-            disk_path=$(find /dev/disk/by-id -maxdepth 1 -name "${pattern}" ! -name "*-part*" -print -quit 2>/dev/null || true)
-            if [ -n "${disk_path}" ] && [ -b "${disk_path}" ]; then
-              echo "${disk_path}"
-              return 0
-            fi
-          done
+          # Try exact match: google-<label>
+          disk_path="/dev/disk/by-id/google-${DISK_LABEL}"
+          if [ -b "${disk_path}" ]; then
+            echo "${disk_path}"
+            return 0
+          fi
         fi
         
         # Priority 2: Check for disk by filesystem label
@@ -70,7 +69,7 @@ write_files:
       fi
       
       # Wait for disk to be available (retry discovery if needed)
-      for i in $(seq 1 30); do
+      for i in {1..30}; do
         if [ -n "${DISK_DEVICE}" ] && [ -b "${DISK_DEVICE}" ]; then
           break
         fi

@@ -58,14 +58,12 @@ discover_media_disk() {
     # Priority 1: Check for Google Cloud persistent disk by name pattern
     # Google Cloud disks appear as google-<disk-name> in /dev/disk/by-id/
     if [[ -d /dev/disk/by-id ]]; then
-        for pattern in "google-${disk_label}" "google-*${disk_label}*"; do
-            # Use find to get the first matching symlink (without part suffix)
-            disk_path=$(find /dev/disk/by-id -maxdepth 1 -name "${pattern}" ! -name "*-part*" -print -quit 2>/dev/null || true)
-            if [[ -n "${disk_path}" && -b "${disk_path}" ]]; then
-                echo "${disk_path}"
-                return 0
-            fi
-        done
+        # Try exact match first: google-<label>
+        disk_path="/dev/disk/by-id/google-${disk_label}"
+        if [[ -b "${disk_path}" ]]; then
+            echo "${disk_path}"
+            return 0
+        fi
     fi
     
     # Priority 2: Check for disk by filesystem label
