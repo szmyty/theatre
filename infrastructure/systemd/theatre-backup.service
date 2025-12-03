@@ -1,0 +1,20 @@
+[Unit]
+Description=Theatre Backup to GCS Service
+Documentation=https://github.com/szmyty/theatre
+After=network-online.target gocryptfs-mount.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/theatre/backup.env
+ExecStart=/opt/theatre/repo/scripts/backup-to-gcs.sh
+
+# Security settings
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

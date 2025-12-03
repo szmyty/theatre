@@ -541,6 +541,36 @@ For the best SyncPlay experience:
 
 3. **Stable connection**: Recommend all participants use a stable internet connection
 
+## Backup and Disaster Recovery
+
+The Theatre project includes a comprehensive backup strategy for disaster recovery. See [docs/BACKUP.md](docs/BACKUP.md) for full documentation.
+
+### Backup Components
+
+| Component | Method | Frequency |
+|-----------|--------|-----------|
+| Media Disk | GCP Disk Snapshots | Daily at 4:00 AM UTC |
+| Jellyfin Config | GCS Sync | Daily at 3:00 AM UTC |
+| gocryptfs.conf | GCS Sync | Daily at 3:00 AM UTC |
+
+### Quick Start
+
+1. **Create GCS bucket** for configuration backups
+2. **Add `BACKUP_BUCKET` variable** to GitHub repository
+3. **Create snapshot schedule** using `infrastructure/scripts/ensure_snapshot_schedule.sh`
+4. **Enable VM-side backups** by running `infrastructure/scripts/ensure_backup.sh` on the VM
+
+### Manual Backup
+
+Via GitHub Actions:
+1. Go to **Actions** → **Backup**
+2. Click **Run workflow**
+
+Via SSH:
+```bash
+sudo /opt/theatre/repo/scripts/backup-to-gcs.sh --bucket gs://your-backup-bucket
+```
+
 ## Future Automation Notes
 
 The following automation improvements are planned or in progress:
@@ -548,7 +578,6 @@ The following automation improvements are planned or in progress:
 ### Planned Features
 
 - [ ] **Terraform Infrastructure**: Infrastructure as Code for full GCP deployment automation
-- [ ] **Automated Backups**: Scheduled backups of Jellyfin configuration and encrypted media metadata
 - [ ] **Monitoring & Alerting**: Integration with Prometheus/Grafana for system monitoring
 - [ ] **Multi-region Deployment**: Support for deploying to multiple regions for better latency
 - [ ] **GitHub Actions Improvements**:
@@ -566,6 +595,7 @@ The following automation improvements are planned or in progress:
 | DuckDNS Updates | ✅ Complete | Systemd timer for periodic DNS updates |
 | GitHub Actions Deploy | ✅ Complete | One-click VM deployment workflow |
 | Automatic HTTPS | ✅ Complete | Caddy reverse proxy with Let's Encrypt via DuckDNS DNS-01 |
+| Automated Backups | ✅ Complete | GCS sync and GCP disk snapshots with GitHub Actions workflow |
 
 ### Contributing
 

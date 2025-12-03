@@ -1,0 +1,166 @@
+# Backup Workflow - Scheduled and manual backups to GCS
+name: Backup
+
+on:
+  # Run daily at 4:00 AM UTC (after VM-side backup at 3:00 AM)
+  schedule:
+    - cron: '0 4 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      backup_type:
+        description: 'Backup type'
+        required: true
+        default: 'config'
+        type: choice
+        options:
+          - config
+          - snapshot
+          - both
+      create_snapshot:
+        description: 'Create disk snapshot'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  VM_NAME: ${{ vars.GCP_VM_NAME || 'theatre-vm' }}
+  MEDIA_DISK_NAME: ${{ vars.GCP_MEDIA_DISK_NAME || 'theatre-media-disk' }}
+  BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET || '' }}
+  SCRIPTS_DIR: /opt/theatre/scripts
+
+jobs:
+  backup-config:
+    name: Backup Configuration
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event.inputs.backup_type == 'config' || github.event.inputs.backup_type == 'both'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Check VM status
+        id: vm_status
+        run: |
+          STATUS=$(gcloud compute instances describe "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --format="value(status)" 2>/dev/null || echo "NOT_FOUND")
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+          if [[ "${STATUS}" != "RUNNING" ]]; then
+            echo "::warning::VM ${VM_NAME} is not running (status: ${STATUS})"
+          fi
+
+      - name: Run backup on VM
+        if: steps.vm_status.outputs.status == 'RUNNING'
+        run: |
+          # Check if backup bucket is configured
+          if [[ -z "${BACKUP_BUCKET}" ]]; then
+            echo "::warning::BACKUP_BUCKET not configured. Skipping config backup."
+            exit 0
+          fi
+          
+          # Wait for SSH
+          for i in {1..12}; do
+            gcloud compute ssh "${VM_NAME}" \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --zone="${{ secrets.GCP_ZONE }}" \
+              --command="true" \
+              --quiet 2>/dev/null && break
+            echo "Waiting for SSH (${i}/12)..." && sleep 10
+          done
+          
+          # Run backup script
+          gcloud compute ssh "${VM_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --zone="${{ secrets.GCP_ZONE }}" \
+            --command="sudo ${SCRIPTS_DIR}/../repo/scripts/backup-to-gcs.sh --bucket ${BACKUP_BUCKET}"
+
+      - name: Verify backup
+        if: steps.vm_status.outputs.status == 'RUNNING'
+        run: |
+          if [[ -z "${BACKUP_BUCKET}" ]]; then
+            exit 0
+          fi
+          
+          # Check for latest manifest
+          MANIFEST=$(gsutil cat "${BACKUP_BUCKET}/theatre-backup/manifests/latest-manifest.json" 2>/dev/null || echo "{}")
+          echo "Latest backup manifest:"
+          echo "${MANIFEST}" | jq . || echo "${MANIFEST}"
+          
+          # Verify backup files exist
+          echo ""
+          echo "Backup contents:"
+          gsutil ls -l "${BACKUP_BUCKET}/theatre-backup/" 2>/dev/null || echo "No backups found"
+
+  create-snapshot:
+    name: Create Disk Snapshot
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_snapshot == 'true' || github.event.inputs.backup_type == 'snapshot' || github.event.inputs.backup_type == 'both'
+    
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Create snapshot
+        id: snapshot
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          SNAPSHOT_NAME="${MEDIA_DISK_NAME}-manual-${TIMESTAMP}"
+          
+          echo "Creating snapshot ${SNAPSHOT_NAME}..."
+          
+          gcloud compute snapshots create "${SNAPSHOT_NAME}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --source-disk="${MEDIA_DISK_NAME}" \
+            --source-disk-zone="${{ secrets.GCP_ZONE }}" \
+            --description="Manual backup snapshot created by GitHub Actions"
+          
+          echo "snapshot_name=${SNAPSHOT_NAME}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Created snapshot: ${SNAPSHOT_NAME}"
+
+      - name: List recent snapshots
+        run: |
+          echo "Recent snapshots for ${MEDIA_DISK_NAME}:"
+          gcloud compute snapshots list \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --filter="sourceDisk~${MEDIA_DISK_NAME}" \
+            --sort-by=~creationTimestamp \
+            --limit=5 \
+            --format="table(name, creationTimestamp, diskSizeGb, status)"
+
+  backup-summary:
+    name: Backup Summary
+    runs-on: ubuntu-latest
+    needs: [backup-config]
+    if: always()
+    
+    steps:
+      - name: Print summary
+        run: |
+          echo "============================================================"
+          echo "                   BACKUP SUMMARY"
+          echo "============================================================"
+          echo "Timestamp: $(date --iso-8601=seconds)"
+          echo "VM: ${VM_NAME}"
+          echo "Disk: ${MEDIA_DISK_NAME}"
+          echo ""
+          echo "Config Backup: ${{ needs.backup-config.result }}"
+          echo "============================================================"
