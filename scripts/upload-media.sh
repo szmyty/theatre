@@ -78,7 +78,7 @@ upload_file() {
 
     log "Uploading '${filename}' to ${remote_host}:${REMOTE_DIR}..."
 
-    scp --compress --preserve -v "${local_file}" "${remote_host}:${REMOTE_DIR}/"
+    rsync -az --progress -e ssh "${local_file}" "${remote_host}:${REMOTE_DIR}/"
 
     log "Upload completed successfully"
 }
