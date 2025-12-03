@@ -33,22 +33,10 @@ check_root() {
     fi
 }
 
-# Install Docker using the official convenience script
+# Install Docker using the consolidated install script
 install_docker() {
     log "Installing Docker..."
-    
-    if command -v docker &>/dev/null; then
-        log "Docker is already installed"
-        return 0
-    fi
-    
-    # Download and run the official Docker installation script
-    curl --fail --silent --show-error --location https://get.docker.com | bash
-    
-    # Enable and start Docker service
-    systemctl enable --now docker
-    
-    log "Docker installed successfully"
+    "${PROJECT_ROOT}/scripts/install_docker.sh"
 }
 
 # Migrate Docker and containerd data root to media disk
