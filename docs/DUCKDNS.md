@@ -27,6 +27,29 @@ To add secrets:
 3. Click **New repository secret**
 4. Add each secret with its corresponding value
 
+## Docker Secrets Setup (for Caddy)
+
+The DuckDNS token for Caddy is managed via Docker secrets for better security.
+
+### Setup Instructions
+
+1. Copy the example secret file:
+   ```bash
+   cp config/secrets/duckdns_token.txt.example config/secrets/duckdns_token.txt
+   ```
+
+2. Edit the file with your actual DuckDNS token:
+   ```bash
+   nano config/secrets/duckdns_token.txt
+   ```
+
+3. Ensure the file has restricted permissions:
+   ```bash
+   chmod 600 config/secrets/duckdns_token.txt
+   ```
+
+The secret is automatically mounted into the Caddy container at `/run/secrets/duckdns_token` and read by the Caddyfile.
+
 ## VM Installation
 
 ### 1. Create the Environment File

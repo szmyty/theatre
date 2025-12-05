@@ -5,7 +5,7 @@
     reverse_proxy jellyfin:8096
 
     tls {
-        dns duckdns {$DUCKDNS_TOKEN}
+        dns duckdns {file./run/secrets/duckdns_token}
     }
 
     header {
