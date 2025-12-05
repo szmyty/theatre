@@ -45,7 +45,8 @@ services:
       - caddy_config:/config
     environment:
       - DOMAIN_NAME=${DOMAIN_NAME:-movietheatre.duckdns.org}
-      - DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+    secrets:
+      - duckdns_token
     healthcheck:
       test: ["CMD", "caddy", "version"]
       interval: 30s
@@ -54,6 +55,10 @@ services:
       start_period: 10s
     networks:
       - theatre
+
+secrets:
+  duckdns_token:
+    file: ./config/secrets/duckdns_token.txt
 
 volumes:
   caddy_data:

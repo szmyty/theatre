@@ -30,3 +30,7 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Docker secret files (actual secrets, not examples)
+config/secrets/*.txt
+!config/secrets/*.txt.example

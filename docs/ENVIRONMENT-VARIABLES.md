@@ -40,10 +40,13 @@ The `_PASSWORD` variable is typically used during initial provisioning to set up
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `DUCKDNS_TOKEN` | Secret | - | DuckDNS authentication token |
+| `DUCKDNS_TOKEN` | Secret | - | DuckDNS authentication token (for systemd service, not Docker) |
 | `DUCKDNS_DOMAIN` | String | - | DuckDNS subdomain (without `.duckdns.org`) |
 | `DUCKDNS_ENV_DIR` | Path | `/etc/duckdns` | Directory containing DuckDNS configuration |
 | `DOMAIN_NAME` | String | - | Full domain name (e.g., `movietheatre.duckdns.org`) |
+
+> **Note**: For Docker containers, the DuckDNS token is now managed via Docker secrets.
+> See `config/secrets/duckdns_token.txt.example` for setup instructions.
 
 ### Infrastructure Variables
 
@@ -78,6 +81,20 @@ The `_PASSWORD` variable is typically used during initial provisioning to set up
 | `/etc/gocryptfs/passfile` | gocryptfs encryption password |
 | `/etc/duckdns/duckdns.env` | DuckDNS service environment configuration |
 | `/opt/theatre/repo/.env` | Docker Compose environment file |
+
+### Docker Secrets
+
+Docker secrets are stored in `config/secrets/` and mounted into containers at `/run/secrets/`:
+
+| Secret File | Container Path | Purpose |
+|-------------|----------------|---------|
+| `config/secrets/duckdns_token.txt` | `/run/secrets/duckdns_token` | DuckDNS authentication token for Caddy |
+
+To set up Docker secrets:
+
+1. Copy the example file: `cp config/secrets/duckdns_token.txt.example config/secrets/duckdns_token.txt`
+2. Edit the file with your actual token: `nano config/secrets/duckdns_token.txt`
+3. Ensure the file has restricted permissions: `chmod 600 config/secrets/duckdns_token.txt`
 
 ### Systemd Environment Files
 
